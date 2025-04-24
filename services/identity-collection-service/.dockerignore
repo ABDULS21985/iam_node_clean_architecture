@@ -1,0 +1,33 @@
+# --- Dependencies and Build Artifacts ---
+node_modules/
+**/node_modules/ # Exclude node_modules in any subdirectory
+dist/
+build/
+coverage/
+*.log
+
+# --- Version Control and Editors ---
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# --- Environment Files ---
+.env # Don't copy environment variables into the image
+
+# --- Docker specific ---
+Dockerfile # Don't copy the Dockerfile into the build context (it's used by Docker)
+docker-compose.yml
+**/docker-compose*.yml # Exclude compose files in subdirectories
+*.swp
+*.swo
+
+# --- Explicitly include directories that might be excluded by default .gitignore rules ---
+# If your .gitignore excludes folders without explicit negations, you might need to negate here
+#!/services/ # Example negation if /services was excluded
+#!/shared/   # Example negation if /shared was excluded
+
+# If using nested package.json and npm ci, ensure package-lock.json files are included
+# COPY instructions already specify exact paths, so this might not be needed, but can help context transfer
+**/package.json
+**/package-lock.json
