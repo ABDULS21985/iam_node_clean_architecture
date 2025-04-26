@@ -37,6 +37,7 @@ services:
       - POSTGRES_DB=${DB_NAME}
     volumes:
       - config-db-data:/var/lib/postgresql/data
+      - ./scripts/init-idcs-db.sql:/docker-entrypoint-initdb.d/init-idcs-db.sql
     networks: [backend]
 
   # --- Messaging / Event Bus (RabbitMQ) ---
@@ -78,14 +79,25 @@ services:
   # --- Identity Collection Service ---
   idcs-service:
     build:
-      context: ..                                    # ← root of repo, so /shared & /services/* are available
+      context: ..                                   
       dockerfile: services/identity-collection-service/Dockerfile
     container_name: iglm-idcs
     restart: on-failure
     env_file: [.env]
+    environment:
+      # Override for inside‐container connectivity
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
     ports:
       - "${IDCS_PORT}:${IDCS_PORT}"
-    depends_on: [config-db, rabbitmq, redis, consul, hrms-db]
+    depends_on:
+      - config-db
+      - rabbitmq
+      - redis
+      - consul
+      - hrms-db
     networks: [backend]
 
   # --- Joiner Service ---

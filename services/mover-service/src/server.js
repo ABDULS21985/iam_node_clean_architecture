@@ -59,15 +59,15 @@ async function startService() {
     // Get the name of the mapping config from serviceConfigs
     const attributeToRoleMappingName = serviceConfigs.attributeToRoleMappingName;
     attributeToRoleMappingConfig = await ConfigService.sequelize.models.MappingConfig.findOne({
-         where: { name: attributeToRoleMappingName, sourceType: 'UserAttributes', targetType: 'Roles' }
+         where: { name: attributeToRoleMappingName, sourceType: 'UserAttributes', targetType: 'Roles', serviceName: null } // Global mapping, serviceName is null
          // TODO: Add environment filter if configs are per environment
     });
 
     if (!attributeToRoleMappingConfig || !attributeToRoleMappingConfig.mappingRules || !attributeToRoleMappingConfig.mappingRules.attributeToRoleMapping) {
-         console.error(`[<span class="math-inline">\{serviceName\}\] Attribute\-to\-Role Mapping Config "</span>{attributeToRoleMappingName}" not found or incomplete. Mover service cannot re-assign roles based on attributes.`);
+         console.error(`[${serviceName}] Attribute-to-Role Mapping Config "${attributeToRoleMappingName}" not found or incomplete. Mover service cannot re-assign roles based on attributes.`);
          throw new Error(`Attribute-to-Role Mapping Config "${attributeToRoleMappingName}" not found or incomplete.`);
     } else {
-         console.log(`[<span class="math-inline">\{serviceName\}\] Loaded Attribute\-to\-Role Mapping Config\: "</span>{attributeToRoleMappingConfig.name}".`);
+         console.log(`[${serviceName}] Loaded Attribute-to-Role Mapping Config: "${attributeToRoleMappingConfig.name}".`);
     }
 
 
@@ -128,15 +128,16 @@ async function setupMoverEventListener(attributeToRoleMappingConfig) {
      try {
          // Declare the exchange published to by ICS
          await channel.assertExchange(IDENTITY_CHANGES_EXCHANGE, 'topic', { durable: true });
-         console.log(`[<span class="math-inline">\{serviceName\}\] Listener\: Exchange "</span>{IDENTITY_CHANGES_EXCHANGE}" asserted.`);
+         console.log(`[${serviceName}] Listener: Exchange "${IDENTITY_CHANGES_EXCHANGE}" asserted.`);
 
          // Declare the queue specific to this Mover service
+         // Use a durable queue for reliability even if the service restarts.
          const queue = await channel.assertQueue(MOVER_QUEUE, { durable: true });
-         console.log(`[<span class="math-inline">\{serviceName\}\] Listener\: Queue "</span>{queue.queue}" asserted.`);
+         console.log(`[${serviceName}] Listener: Queue "${queue.queue}" asserted.`);
 
          // Bind the queue to the exchange using the 'mover.update' routing key
          await channel.bindQueue(queue.queue, IDENTITY_CHANGES_EXCHANGE, MOVER_ROUTING_KEY);
-         console.log(`[<span class="math-inline">\{serviceName\}\] Listener\: Queue "</span>{queue.queue}" bound to exchange "<span class="math-inline">\{IDENTITY\_CHANGES\_EXCHANGE\}" with key "</span>{MOVER_ROUTING_KEY}".`);
+         console.log(`[${serviceName}] Listener: Queue "${queue.queue}" bound to exchange "${IDENTITY_CHANGES_EXCHANGE}" with key "${MOVER_ROUTING_KEY}".`);
 
 
          // Start consuming messages from the queue
@@ -183,7 +184,7 @@ async function setupMoverEventListener(attributeToRoleMappingConfig) {
                  // Prepare the payload for the Provisioning Service API
                  const desiredStatePayload = {
                      userId: userId, // IGLM User ID
-                     roles: rolesForProvisioning // Array of *new* desired IGLM Role names
+                     roles: rolesForProvisioning // Array of *new* determined IGLM Role names
                      // TODO: Add other context if needed by Provisioning Service, e.g., user attributes
                  };
 
@@ -218,7 +219,7 @@ async function setupMoverEventListener(attributeToRoleMappingConfig) {
              } catch (error) {
                  // Catch errors that occur *during* the processing of a specific message
                  console.error(`[${serviceName}] Listener error processing mover event message for user ID ${userId}:`, error);
-                 // TODO: Implement robust retry logic using NACK and potentially delayed queues
+                 // TODO: Implement robust retry logic using NACK and potentially delayed/dead-letter queues
                   channel.nack(msg, false, true); // Reject and requeue for a retry
 
                  // TODO: Log this processing error properly, potentially with the message payload details
@@ -227,7 +228,7 @@ async function setupMoverEventListener(attributeToRoleMappingConfig) {
              noAck: false // Crucial: We will manually acknowledge messages
          });
 
-         console.log(`[<span class="math-inline">\{serviceName\}\] Listener started consuming messages from queue "</span>{queue.queue}".`);
+         console.log(`[${serviceName}] Listener started consuming messages from queue "${queue.queue}".`);
 
      } catch (setupError) {
           console.error(`[${serviceName}] Failed to setup Mover Event Listener:`, setupError);
@@ -240,7 +241,9 @@ async function setupMoverEventListener(attributeToRoleMappingConfig) {
 // --- Graceful Shutdown Handling ---
 process.on('SIGTERM', async () => {
     console.log(`[${serviceName}] SIGTERM received, starting graceful shutdown.`);
-    // TODO: Implement graceful shutdown
+    // TODO: Implement graceful shutdown (stop MQ consumer, finish ongoing tasks, close connections)
+    // Stop consuming messages: MqService would need a stopConsuming method.
+    // Wait for ongoing API calls to Provisioning Service to finish?
 
     // Close connections
     if (ConfigService.sequelize) {

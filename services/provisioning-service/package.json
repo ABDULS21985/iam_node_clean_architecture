@@ -3,7 +3,10 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "stop:idcs": "npx kill-port 4001",
+    "stop:discovery": "npx kill-port 4006",
+    "stop:all": "npx kill-port 4001 4006"
   },
   "keywords": [],
   "author": "",

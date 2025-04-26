@@ -1,12 +1,21 @@
-// services/identity-collection-service/src/server.js
+// // services/identity-collection-service/src/server.js
 
 // --- Node.js Core & Express Setup ---
 const express = require('express');
 const app = express();
 const port = process.env.IDCS_PORT || 4001; // Use the port defined in .env, default to 4001
+let server = null; // Keep track of the HTTP server instance
 
 // --- Third-Party Libraries ---
 const cron = require('node-cron'); // For scheduling tasks
+const axios = require('axios'); // For potentially making external API calls
+
+// --- Updated axios-retry import ---
+const axiosRetryModule = require('axios-retry'); // Import the module
+// Safely get the main function, accounting for .default export
+const axiosRetry = axiosRetryModule.default || axiosRetryModule;
+// --- End Updated axios-retry import ---
+
 
 // --- Internal Modules ---
 // Import the main collection logic orchestrator module
@@ -17,12 +26,12 @@ const TemporaryStorage = require('./temporaryStorage'); // Adjust path if needed
 
 // --- Shared Services and Models ---
 // Import shared infrastructure services
-const ConfigService = require('../../shared/configService'); // Adjust the relative path as needed
-const MqService = require('../../shared/mqService');       // Adjust the relative path as needed
+const ConfigService = require('../../../shared/configService'); // Adjust the relative path as needed
+const MqService = require('../../../shared/mqService');       // Adjust the relative path as needed
 // Import ALL models needed by collectionLogic or other parts of this service
 // Accessing models via ConfigService.sequelize.models is preferred after ConfigService.init
 // but importing the module here is needed for static properties/types or if not using ConfigService's sequelize instance
-const models = require('../../shared/models');
+const models = require('../../../shared/models');
 // Destructure specific models for clarity if you use them directly in this file (optional)
 const { CollectionRun, ConnectorConfig, MappingConfig, User, Application, Entitlement, Role, UserRole, RoleEntitlementMapping } = models;
 
@@ -32,6 +41,28 @@ const { CollectionRun, ConnectorConfig, MappingConfig, User, Application, Entitl
 const serviceName = 'identity-collection-service';
 // Object to hold loaded service-specific configurations (like polling interval, connector names)
 let serviceConfigs = {};
+
+// --- Scheduling ---
+let scheduledTask = null; // Variable to hold the scheduled cron task instance
+
+// --- Configure axios-retry ---
+// Apply retry logic to the axios instance for API calls made by this service or modules it uses (like adapters).
+// This assumes that external HTTP calls within collectionLogic or its adapters use this shared axios instance.
+axiosRetry(axios, {
+    retries: 3, // Number of retry attempts
+    retryDelay: axiosRetry.ExponentialBackoff, // Use exponential backoff for delays between retries (e.g., 1s, 2s, 4s, ...)
+    // Define the condition for retrying a failed request.
+    // Retry on network errors or standard retryable errors (typically 5xx status codes).
+    retryCondition: (error) => {
+        return axiosRetry.isNetworkError(error) || axiosRetry.isRetryableError(error);
+    },
+    // TODO: Configure specific status codes to retry on if needed (e.g., add || (error.response && error.response.status === 429))
+    onRetry: (retryCount, error, requestConfig) => {
+        // Log a warning when a retry attempt is made
+        console.warn(`[${serviceName}] Axios Retry: Attempt ${retryCount} failed for ${requestConfig.method.toUpperCase()} ${requestConfig.url}. Error: ${error.message}`);
+    }
+});
+console.log(`[${serviceName}] Configured axios with retry logic for outgoing HTTP requests.`);
 
 
 // --- Core Collection Run Orchestration ---
@@ -48,7 +79,7 @@ async function performDataCollectionRun() {
         serviceConfigs: serviceConfigs, // Service specific configs loaded at startup
         configService: ConfigService,     // The initialized ConfigService instance (for accessing Config DB)
         mqService: MqService,           // The initialized MqService instance (for publishing events)
-        models: models,                   // All Sequelize models (Core Data Model, Config Models, Run Log Models)
+        models: models,                 // All Sequelize models (Core Data Model, Config Models, Run Log Models)
         temporaryStorage: TemporaryStorage // The initialized TemporaryStorage implementation module
         // TODO: Add other dependencies like logger, health check reporter, etc.
     };
@@ -79,11 +110,11 @@ async function scheduleDataCollection() {
     // Attempt to parse polling interval from serviceConfigs.
     // Config key name 'pollingIntervalMinutes' should be added to the Config Database for this service,
     // associated with serviceName: 'identity-collection-service'.
-    const pollingIntervalMinutes = parseInt(serviceConfigs.pollingIntervalMinutes) || 60; // Default to 60 minutes if config is missing or invalid
+    const pollingIntervalMinutes = parseInt(serviceConfigs.pollingIntervalMinutes, 10) || 60; // Parse as integer, Default to 60 minutes if config is missing or invalid
 
     if (pollingIntervalMinutes <= 0) {
-         console.warn(`[${serviceName}] Configured polling interval is ${pollingIntervalMinutes} minutes (<= 0). Skipping scheduler setup.`);
-         return; // Don't schedule if interval is zero or negative
+        console.warn(`[${serviceName}] Configured polling interval is ${pollingIntervalMinutes} minutes (<= 0). Skipping scheduler setup.`);
+        return; // Don't schedule if interval is zero or negative
     }
 
     // Use node-cron to schedule the task
@@ -91,7 +122,8 @@ async function scheduleDataCollection() {
     const cronSchedule = `*/${pollingIntervalMinutes} * * * *`;
     console.log(`[${serviceName}] Scheduling data collection to run every ${pollingIntervalMinutes} minutes (Cron schedule: "${cronSchedule}")`);
 
-    cron.schedule(cronSchedule, async () => {
+    // Schedule the task and store the scheduled task instance
+    scheduledTask = cron.schedule(cronSchedule, async () => {
         // The function that gets called by cron on schedule
         console.log(`[${serviceName}] Cron schedule triggered.`);
         await performDataCollectionRun(); // Call the orchestrator function
@@ -117,10 +149,10 @@ async function startService() {
     // Load configurations specific to this service (like polling interval, connector names, mapping names)
     // Ensure these configs exist in the Config Database for serviceName: 'identity-collection-service'
     serviceConfigs = await ConfigService.loadServiceConfigs(serviceName);
-     // Basic check to ensure critical configs are loaded
-    if (!serviceConfigs || !serviceConfigs.hrmsConnectorName || !serviceConfigs.userMappingName) {
-         console.error(`[${serviceName}] Missing critical service configurations. Loaded:`, serviceConfigs);
-         throw new Error('Missing critical service configurations (hrmsConnectorName and/or userMappingName)');
+      // Basic check to ensure critical configs are loaded
+    if (!serviceConfigs || serviceConfigs.hrmsConnectorName === undefined || serviceConfigs.userMappingName === undefined || serviceConfigs.pollingIntervalMinutes === undefined) { // Added check for undefined/null
+        console.error(`[${serviceName}] Missing critical service configurations. Need 'hrmsConnectorName', 'userMappingName', and 'pollingIntervalMinutes'. Loaded:`, serviceConfigs);
+        throw new Error('Missing critical service configurations (hrmsConnectorName, userMappingName, or pollingIntervalMinutes)');
     }
     console.log(`[${serviceName}] Loaded service configurations:`, serviceConfigs);
 
@@ -129,6 +161,14 @@ async function startService() {
     await MqService.init();
     await MqService.waitForChannel(); // Wait for MQ channel to be ready
     console.log(`[${serviceName}] Message Queue connected and channel ready.`);
+
+    // Add listeners for critical MQ channel and connection errors
+    MqService.channel.on('close', () => console.log(`[${serviceName}] MQ channel closed.`));
+    MqService.channel.on('error', (err) => console.error(`[${serviceName}] MQ channel error:`, err));
+    MqService.connection.on('close', (err) => console.log(`[${serviceName}] MQ connection closed.`, err));
+    MqService.connection.on('error', (err) => console.error(`[${serviceName}] MQ connection error:`, err));
+    MqService.connection.on('blocked', (reason) => console.warn(`[${serviceName}] MQ connection blocked:`, reason));
+    MqService.connection.on('unblocked', () => console.log(`[${serviceName}] MQ connection unblocked.`));
 
 
     // 3. Initialize Temporary Storage (Redis)
@@ -156,7 +196,7 @@ async function startService() {
 
 
     // 5. Start the Express server listening for incoming requests (like health checks)
-    app.listen(port, () => {
+    server = app.listen(port, () => { // Capture server instance for graceful shutdown
       console.log(`[${serviceName}] Service listening on port ${port}`);
     });
 
@@ -167,7 +207,7 @@ async function startService() {
 
     // Optionally, trigger an immediate run on startup for testing/initial sync
     // console.log(`[${serviceName}] Triggering immediate collection run on startup.`);
-    // await performDataCollectionRun();
+    // performDataCollectionRun(); // Call without await so startup isn't blocked by first run
 
 
     console.log(`[${serviceName}] Service initialization complete.`);
@@ -186,64 +226,126 @@ startService();
 
 
 // --- Graceful Shutdown Handling ---
+// Array to hold promises of active collection runs that need to complete during shutdown
+let activeCollectionRuns = []; // CollectionLogic.performRun should add its promise to this array
+
 // Listen for termination signals (e.g., from Docker/Kubernetes stop)
 process.on('SIGTERM', async () => {
     console.log(`[${serviceName}] SIGTERM received, starting graceful shutdown.`);
-    // TODO: Implement graceful shutdown (stop cron scheduler tasks, ensure ongoing runs finish if possible)
-
-    // Close connections to external services
-    if (ConfigService.sequelize) {
-        await ConfigService.sequelize.close().catch(err => console.error(`[${serviceName}] Error closing Config DB connection:`, err));
-        console.log(`[${serviceName}] Config DB connection closed.`);
-    }
-    if (MqService.connection) {
-        await MqService.connection.close().catch(err => console.error(`[${serviceName}] Error closing MQ connection:`, err));
-        console.log(`[${serviceName}] MQ connection closed.`);
-    }
-    if (TemporaryStorage.redisClient) { // Check if redisClient exists before trying to close
-       await TemporaryStorage.close().catch(err => console.error(`[${serviceName}] Error closing Redis client:`, err));
-       console.log(`[${serviceName}] Redis client connection closed.`);
-    }
-
-    console.log(`[${serviceName}] Graceful shutdown complete.`);
-    process.exit(0); // Exit successfully
+    await gracefulShutdown();
 });
 
 // Listen for interrupt signals (e.g., Ctrl+C)
 process.on('SIGINT', async () => {
     console.log(`[${serviceName}] SIGINT received, starting graceful shutdown.`);
-    // TODO: Implement graceful shutdown (stop cron scheduler tasks, ensure ongoing runs finish if possible)
+    await gracefulShutdown();
+});
 
-    // Close connections to external services
+// Graceful shutdown function
+async function gracefulShutdown() {
+    console.log(`[${serviceName}] Starting graceful shutdown...`);
+
+    // 1. Stop the cron scheduler from triggering new runs
+    if (scheduledTask) {
+        scheduledTask.stop(); // Stop the cron task
+        console.log(`[${serviceName}] Cron scheduler stopped.`);
+    } else {
+        console.log(`[${serviceName}] Cron scheduler was not running.`);
+    }
+
+    // 2. Stop the Express HTTP server from accepting new connections
+    if (server) {
+        console.log(`[${serviceName}] Stopping HTTP server...`);
+        await new Promise((resolve, reject) => {
+            server.close((err) => {
+                if (err) {
+                    console.error(`[${serviceName}] Error stopping HTTP server:`, err);
+                    // Decide if HTTP server close failure is critical or just log and proceed
+                    return reject(err); // Treat as failure to stop gracefully
+                }
+                console.log(`[${serviceName}] HTTP server stopped.`);
+                resolve();
+            });
+        }).catch(err => console.error(`[${serviceName}] Failed to stop HTTP server gracefully:`, err));
+    } else {
+        console.log(`[${serviceName}] HTTP server was not started.`);
+    }
+
+
+    // 3. Wait for any currently active data collection runs to complete
+    // CollectionLogic.performRun should add its promise to the `activeCollectionRuns` array.
+    if (activeCollectionRuns.length > 0) {
+        console.log(`[${serviceName}] Waiting for ${activeCollectionRuns.length} active collection runs to finish...`);
+        // Use Promise.allSettled to wait for all promises to settle (either fulfill or reject)
+        await Promise.allSettled(activeCollectionRuns);
+        console.log(`[${serviceName}] All active collection runs have finished.`);
+    } else {
+        console.log(`[${serviceName}] No active collection runs to wait for.`);
+    }
+
+
+    // 4. Close connections to external services (Databases, Message Queue, Temporary Storage)
+    console.log(`[${serviceName}] Closing external service connections...`);
     if (ConfigService.sequelize) {
-         await ConfigService.sequelize.close().catch(err => console.error(`[${serviceName}] Error closing Config DB connection:`, err));
-         console.log(`[${serviceName}] Config DB connection closed.`);
+        console.log(`[${serviceName}] Closing Config DB connection...`);
+        await ConfigService.sequelize.close().catch(err => console.error(`[${serviceName}] Error closing Config DB connection:`, err));
+        console.log(`[${serviceName}] Config DB connection closed.`);
+    }
+    // Assuming models.sequelize is the Core Data Model DB connection if used directly
+    if (models.sequelize) {
+        console.log(`[${serviceName}] Closing Core DB connection...`);
+        await models.sequelize.close().catch(err => console.error(`[${serviceName}] Error closing Core DB connection:`, err));
+        console.log(`[${serviceName}] Core DB connection closed.`);
     }
     if (MqService.connection) {
-         await MqService.connection.close().catch(err => console.error(`[${serviceName}] Error closing MQ connection:`, err));
-         console.log(`[${serviceName}] MQ connection closed.`);
+        console.log(`[${serviceName}] Closing MQ connection...`);
+        // It's good practice to close channel(s) before the connection, though connection.close() might handle it.
+        // In the worker setup, we only created one channel via MqService.channel.
+        if (MqService.channel && !MqService.channel.closed) { // Check if channel exists and is not already closed
+             try {
+                 await MqService.channel.close();
+                 console.log(`[${serviceName}] MQ channel closed.`);
+             } catch (err) {
+                console.error(`[${serviceName}] Error closing MQ channel:`, err);
+             }
+        }
+        // Attempt to close the connection even if channel closing failed or wasn't needed
+        await MqService.connection.close().catch(err => console.error(`[${serviceName}] Error closing MQ connection:`, err));
+        console.log(`[${serviceName}] MQ connection closed.`);
     }
-    if (TemporaryStorage.redisClient) { // Check if redisClient exists
-        await TemporaryStorage.close().catch(err => console.error(`[${serviceName}] Error closing Redis client:`, err));
-        console.log(`[${serviceName}] Redis client connection closed.`);
+    if (TemporaryStorage.redisClient) { // Check if redisClient exists on the TemporaryStorage module
+       console.log(`[${serviceName}] Closing Redis client connection...`);
+       // Assuming TemporaryStorage exports a close method
+       await TemporaryStorage.close().catch(err => console.error(`[${serviceName}] Error closing Redis client:`, err));
+       console.log(`[${serviceName}] Redis client connection closed.`);
     }
+    // TODO: If any connector adapters manage pools or persistent connections (e.g., DB connection pools, LDAP pools),
+    // implement a way to signal them to shut down their connections gracefully here.
+    // This might involve adding a shutdown method to CollectionLogic or the adapter loader.
+
 
     console.log(`[${serviceName}] Graceful shutdown complete.`);
     process.exit(0); // Exit successfully
-});
+}
 
-// Optional: Handle uncaught exceptions
+
+// Optional: Handle uncaught exceptions and unhandled promise rejections
+// Log critical errors before potentially exiting
 process.on('uncaughtException', (err) => {
     console.error(`[${serviceName}] Uncaught Exception:`, err);
-    // TODO: Log this critical error to a centralized logging system
-    // Attempt graceful shutdown, or just exit immediately depending on policy
-    // process.exit(1); // Exit after logging
+    // TODO: Log this critical error to a centralized logging system (e.g., Sentry, Loggly)
+    // In production, it's often best to exit after an uncaught exception to
+    // allow the process manager (like PM2, Kubernetes) to restart the service in a clean state.
+    // Consider performing graceful shutdown before exiting, but sometimes the error
+    // indicates a state where graceful shutdown is not possible.
+    // gracefulShutdown().then(() => process.exit(1)).catch(() => process.exit(1)); // Example: attempt shutdown then exit
+    // process.exit(1); // Exit immediately after logging the error (common safety measure)
 });
 
-// Optional: Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
     console.error(`[${serviceName}] Unhandled Rejection at Promise:`, promise, 'reason:', reason);
-     // TODO: Log this critical error
-    // Attempt graceful shutdown or exit
-    // process.exit(1);
+      // TODO: Log this critical error to a centralized logging system
+    // Similar to uncaughtException, exiting might be necessary in production.
+    // gracefulShutdown().then(() => process.exit(1)).catch(() => process.exit(1)); // Example: attempt shutdown then exit
+    // process.exit(1); // Exit immediately after logging
 });

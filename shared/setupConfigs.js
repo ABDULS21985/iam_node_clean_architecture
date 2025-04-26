@@ -576,8 +576,6 @@ const defaultAttrRoleMappingData = {
         if (createdHrmsConnector) console.log(`[${serviceName}] Created HRMS Connector Config: ${hrmsConnector.name}`);
         else console.log(`[${serviceName}] Found existing HRMS Connector Config: ${hrmsConnector.name}`);
 
-        
-
         // User Mapping Config (Existing insert logic)
         const [userMapping, createdUserMapping] = await MappingConfig.findOrCreate({
              where: { name: userMappingData.name, sourceType: userMappingData.sourceType, targetType: userMappingData.targetType },

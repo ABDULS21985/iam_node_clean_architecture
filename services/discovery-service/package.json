@@ -1,12 +1,10 @@
 {
-  "name": "identity-collection-service",
+  "name": "discovery-service",
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "stop:idcs": "npx kill-port 4001",
-    "stop:discovery": "npx kill-port 4006",
-    "stop:all": "npx kill-port 4001 4006"
+    "stop:discovery": "npx kill-port 4006"
   },
   "keywords": [],
   "author": "",
@@ -14,16 +12,16 @@
   "type": "commonjs",
   "description": "",
   "dependencies": {
-    "axios-retry": "^4.5.0",
-    "dotenv": "^16.5.0",
+    "amqplib": "^0.10.7",
+    "axios": "^1.9.0",
+    "convict": "^6.2.4",
     "express": "^5.1.0",
-    "ioredis": "^5.6.1",
+    "ldapjs": "^3.0.7",
+    "mysql2": "^3.14.0",
     "node-cron": "^3.0.3",
     "oracledb": "^6.8.0",
     "pg": "^8.15.5",
-    "winston": "^3.17.0"
-  },
-  "devDependencies": {
-    "kill-port": "^2.0.1"
+    "soap": "^1.1.11",
+    "ssh2": "^1.16.0"
   }
 }
