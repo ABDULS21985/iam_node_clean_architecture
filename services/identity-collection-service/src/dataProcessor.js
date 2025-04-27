@@ -41,7 +41,7 @@
  * },
  * // Rules like joiner/leaver conditions, mover attributes might be used elsewhere (DeltaDetection, ProcessDeltas)
  * "metadata": { // General metadata about the mapping rules themselves
- * "hrmsUniqueIdField": "employee_id", // Key name in raw HRMS data for unique ID
+ * "sourceUniqueIdField": "employee_id", // Key name in raw HRMS data for unique ID
  * "statusHrmsField": "job_status" // Key name in raw HRMS data for status (redundant if in attributeMappings, but good to be explicit)
  * }
  * }
@@ -66,7 +66,7 @@ function applyMapping(rawRecord, mappingRules) {
     const statusMap = mappingRules.statusMapping || {};
     const metaMaps = mappingRules.metadataMapping || {};
     // Get crucial field names from mapping metadata with fallbacks
-    const hrmsUniqueIdField = mappingRules.metadata?.hrmsUniqueIdField || attrMaps.hrmsId || 'employee_id';
+    const sourceUniqueIdField = mappingRules.metadata?.sourceUniqueIdField || attrMaps.hrmsId || 'employee_id';
     const statusHrmsField = mappingRules.metadata?.statusHrmsField || attrMaps.status || 'job_status';
 
 
@@ -158,12 +158,12 @@ function applyMapping(rawRecord, mappingRules) {
     // --- Final Touches & Validation ---
     // Ensure the essential hrmsId field is correctly set based on the configured unique ID field
     // This is critical for finding users in the DB.
-    if (rawRecord !== null && typeof rawRecord === 'object' && rawRecord.hasOwnProperty(hrmsUniqueIdField) && rawRecord[hrmsUniqueIdField] !== null) {
-        iglmUser.hrmsId = rawRecord[hrmsUniqueIdField];
+    if (rawRecord !== null && typeof rawRecord === 'object' && rawRecord.hasOwnProperty(sourceUniqueIdField) && rawRecord[sourceUniqueIdField] !== null) {
+        iglmUser.hrmsId = rawRecord[sourceUniqueIdField];
     } else {
         // This is a critical error: cannot map a record without its unique ID.
         // Return null to indicate mapping failure for this record.
-        console.error(`[DataProcessor] Mapping Error: Raw HRMS record missing required unique ID field "${hrmsUniqueIdField}" or its value is null. Cannot map record.`);
+        console.error(`[DataProcessor] Mapping Error: Raw HRMS record missing required unique ID field "${sourceUniqueIdField}" or its value is null. Cannot map record.`);
         return null; // Indicate mapping failure for this record
     }
 
@@ -213,18 +213,18 @@ async function processDeltas(deltas, mappingRules, models, mqService) {
     const { User } = models; // Destructure User model
 
     // Ensure mappingRules is valid and contains essential metadata
-    if (!mappingRules || typeof mappingRules !== 'object' || !mappingRules.metadata || !mappingRules.metadata.hrmsUniqueIdField) {
-        console.error("[DataProcessor] Invalid or incomplete mappingRules provided. Missing metadata or hrmsUniqueIdField.");
+    if (!mappingRules || typeof mappingRules !== 'object' || !mappingRules.metadata || !mappingRules.metadata.sourceUniqueIdField) {
+        console.error("[DataProcessor] Invalid or incomplete mappingRules provided. Missing metadata or sourceUniqueIdField.");
         throw new Error("Invalid or incomplete mappingRules provided to DataProcessor.");
     }
-     const hrmsUniqueIdField = mappingRules.metadata.hrmsUniqueIdField; // Get the unique ID field name
+     const sourceUniqueIdField = mappingRules.metadata.sourceUniqueIdField; // Get the unique ID field name
 
 
     // 1. Process Joiners
     console.log(`[DataProcessor] Processing ${deltas.joiners.length} Joiners...`);
     for (const rawJoiner of deltas.joiners) {
         // Get unique ID from raw data for logging context if possible
-        const joinerHrmsId = (rawJoiner && typeof rawJoiner === 'object' && rawJoiner.hasOwnProperty(hrmsUniqueIdField)) ? rawJoiner[hrmsUniqueIdField] : 'N/A (Missing ID)';
+        const joinerHrmsId = (rawJoiner && typeof rawJoiner === 'object' && rawJoiner.hasOwnProperty(sourceUniqueIdField)) ? rawJoiner[sourceUniqueIdField] : 'N/A (Missing ID)';
         try {
             // Apply mapping to transform raw data
             const iglmUserData = applyMapping(rawJoiner, mappingRules);
@@ -277,7 +277,7 @@ async function processDeltas(deltas, mappingRules, models, mqService) {
     // 2. Process Movers
     console.log(`[DataProcessor] Processing ${deltas.movers.length} Movers...`);
     for (const rawMover of deltas.movers) {
-        const moverHrmsId = (rawMover && typeof rawMover === 'object' && rawMover.hasOwnProperty(hrmsUniqueIdField)) ? rawMover[hrmsUniqueIdField] : 'N/A (Missing ID)';
+        const moverHrmsId = (rawMover && typeof rawMover === 'object' && rawMover.hasOwnProperty(sourceUniqueIdField)) ? rawMover[sourceUniqueIdField] : 'N/A (Missing ID)';
         try {
             // Apply mapping to transform raw data
             const iglmUserData = applyMapping(rawMover, mappingRules);
@@ -346,7 +346,7 @@ async function processDeltas(deltas, mappingRules, models, mqService) {
     console.log(`[DataProcessor] Processing ${deltas.leavers.length} Leavers...`);
     for (const rawLeaver of deltas.leavers) {
          // Get unique ID from raw data (from previous snapshot)
-         const leaverHrmsId = (rawLeaver && typeof rawLeaver === 'object' && rawLeaver.hasOwnProperty(hrmsUniqueIdField)) ? rawLeaver[hrmsUniqueIdField] : 'N/A (Missing ID)';
+         const leaverHrmsId = (rawLeaver && typeof rawLeaver === 'object' && rawLeaver.hasOwnProperty(sourceUniqueIdField)) ? rawLeaver[sourceUniqueIdField] : 'N/A (Missing ID)';
          try {
              // Map the leaver record (typically from previous snapshot) to get core IDs/attributes
              // This mapped data might be useful for the event payload, but we primarily need the hrmsId.

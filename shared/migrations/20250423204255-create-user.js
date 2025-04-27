@@ -1,64 +1,121 @@
+// In your YYYYMMDDHHMMSS-create-user.js migration file
 'use strict';
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
     await queryInterface.createTable('Users', {
-      // --- Corrected 'id' field definition ---
       id: {
         allowNull: false, // ID cannot be null
         primaryKey: true, // This is the primary key
         type: Sequelize.UUID, // Data type is UUID
-        // defaultValue: Sequelize.UUIDV4 // Alternative built-in UUID generation (less standard than uuid_generate_v4)
         defaultValue: Sequelize.literal('uuid_generate_v4()') // Use PostgreSQL's uuid_generate_v4() function
       },
-      // --- End Corrected 'id' field definition ---
-  
-      hrmsId: {
+      hrmsId: { // Unique identifier from the HRMS
         type: Sequelize.STRING,
-        unique: true, // hrmsId should be unique to map back to HRMS
-        allowNull: false // Assuming every user must have an HRMS ID
+        allowNull: false, // HRMS ID should be required for users created from HRMS
+        unique: true // Ensure uniqueness at the DB level
       },
       firstName: {
-        type: Sequelize.STRING
-        // Consider making this allowNull: false
+        type: Sequelize.STRING, // Corrected type to Sequelize.STRING
+        allowNull: false
+      },
+      middleName: { // Added as it appears in HRMS data
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true // Allow null for middle name
       },
       lastName: {
-        type: Sequelize.STRING
-         // Consider making this allowNull: false
+        type: Sequelize.STRING, // Corrected type
+        allowNull: false
       },
       email: {
-        type: Sequelize.STRING,
-        unique: true, // Email should be unique
-        allowNull: false // Assuming every user must have an email
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true, // Email might not be mandatory for all users
+        unique: true // Email should be unique if present
       },
-      status: {
-        type: Sequelize.STRING,
-        allowNull: false, // Status is required
-        defaultValue: 'pending_joiner' // Set a default status
+      mobileNumber: { // Added as it appears in HRMS data
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true // Mobile number might be optional
+      },
+      status: { // Current status in the IGLM system ('pending_joiner', 'active', 'inactive', 'exited')
+        type: Sequelize.STRING, // Corrected type
+        allowNull: false, // Matches model
+        defaultValue: 'pending_joiner' // Default status for new users
       },
       hireDate: {
-        type: Sequelize.DATE,
-        allowNull: false // Hire date is required for a user
+        type: Sequelize.DATE, // Corrected type
+        allowNull: true // Hire date might not be strictly mandatory depending on HR data
       },
       exitDate: {
-        type: Sequelize.DATE,
-        allowNull: true // Exit date is nullable
+        type: Sequelize.DATE, // Corrected type
+        allowNull: true // Exit date is null until termination
       },
-      department: {
-        type: Sequelize.STRING
-        // Consider allowNull: false depending on if department is always present
+      supervisorId: { // Supervisor HRMS ID
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true // Supervisor ID might not be mandatory or available for all
       },
-      title: {
-        type: Sequelize.STRING
-         // Consider allowNull: false
+      headOfOfficeId: { // Head of Office HRMS ID
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true // Head of Office ID might not be mandatory or available
       },
-      location: {
-        type: Sequelize.STRING
-         // Consider allowNull: false
+      jobTitle: { // Mapping of HRMS job_title field
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true
       },
-      metadata: {
-        type: Sequelize.JSONB,
-        allowNull: true // Metadata is optional
+      departmentId: { // Mapping of HRMS department_id field
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true
+      },
+      departmentName: { // Mapping of HRMS department_name field
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true
+      },
+      divisionId: { // Mapping of HRMS division_id field
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true
+      },
+      divisionName: { // Mapping of HRMS division_name field
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true
+      },
+      officeId: { // Mapping of HRMS office_id field
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true
+      },
+      officeName: { // Mapping of HRMS office_name field
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true
+      },
+      gradeId: { // Mapping of HRMS grade_id field
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true
+      },
+      grade: { // Mapping of HRMS grade field (grade level)
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true
+      },
+      partyId: { // Mapping of HRMS party_id field
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true
+      },
+      jobStatus: { // Mapping of HRMS job_status field (raw status)
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true
+      },
+       jobLocationId: { // Mapping of HRMS job_location_id field
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true
+      },
+       jobLocation: { // Mapping of HRMS job_location field
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true
+      },
+       location: { // Mapping of HRMS location field (perhaps simplified)
+        type: Sequelize.STRING, // Corrected type
+        allowNull: true
+      },
+      metadata: { // JSONB field for storing additional, less structured attributes from HRMS
+        type: Sequelize.JSONB, // Corrected type
+        allowNull: true
       },
       createdAt: {
         allowNull: false,
@@ -68,8 +125,11 @@ module.exports = {
         allowNull: false,
         type: Sequelize.DATE
       }
+      // Note: The connectorConfigId field was moved to the CollectionRuns table, not here on Users.
+      // Note: The original 'user_id' field (which was also a problem) is removed here, as 'id' is the primary key UUID.
     });
   },
+
   async down(queryInterface, Sequelize) {
     await queryInterface.dropTable('Users');
   }

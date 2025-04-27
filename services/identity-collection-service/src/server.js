@@ -150,9 +150,9 @@ async function startService() {
     // Ensure these configs exist in the Config Database for serviceName: 'identity-collection-service'
     serviceConfigs = await ConfigService.loadServiceConfigs(serviceName);
       // Basic check to ensure critical configs are loaded
-    if (!serviceConfigs || serviceConfigs.hrmsConnectorName === undefined || serviceConfigs.userMappingName === undefined || serviceConfigs.pollingIntervalMinutes === undefined) { // Added check for undefined/null
-        console.error(`[${serviceName}] Missing critical service configurations. Need 'hrmsConnectorName', 'userMappingName', and 'pollingIntervalMinutes'. Loaded:`, serviceConfigs);
-        throw new Error('Missing critical service configurations (hrmsConnectorName, userMappingName, or pollingIntervalMinutes)');
+    if (!serviceConfigs || serviceConfigs.identitySourceConnectorName === undefined || serviceConfigs.userMappingName === undefined || serviceConfigs.pollingIntervalMinutes === undefined) { // Added check for undefined/null
+        console.error(`[${serviceName}] Missing critical service configurations. Need 'identitySourceConnectorName', 'userMappingName', and 'pollingIntervalMinutes'. Loaded:`, serviceConfigs);
+        throw new Error('Missing critical service configurations (identitySourceConnectorName, userMappingName, or pollingIntervalMinutes)');
     }
     console.log(`[${serviceName}] Loaded service configurations:`, serviceConfigs);
 

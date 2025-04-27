@@ -25,22 +25,26 @@ async function runSetup() {
         const hrmsConnectorData = {
             name: "Postgres HRMS Identity Source",
             serviceType: "IdentityCollection",
-            type: "hrms-db-postgres",
-            mappingRules: {               // ← populate the JSONB mappingRules column
-              dbType: "postgres",
-              connection: {
-                host:     process.env.HRMS_DB_HOST,
-                port:     parseInt(process.env.HRMS_DB_PORT, 10),
-                database: process.env.HRMS_DB_NAME,
-                user:     process.env.HRMS_DB_USER,
-                password: process.env.HRMS_DB_PASSWORD
-              },
-              query: "SELECT DISTINCT … FROM apps.xxcbn_iam_employees_v WHERE …",
-              uniqueIdentifierAttribute: "employee_id"
+            type: "hrms-db-postgres", // <-- Important: This type tells ICS which adapter file to load
+            configuration: {
+                dbType: "postgres", // Specify database type for the adapter
+                connection: { // Added nesting for connection details for consistency
+                    host: process.env.HRMS_DB_HOST || "localhost", // Use environment variables for sensitive/env-specific details
+                    port: process.env.HRMS_DB_PORT ? parseInt(process.env.HRMS_DB_PORT, 10) : 5432, // Parse port as integer
+                    database: process.env.HRMS_DB_NAME || "erp",
+                    user: process.env.HRMS_DB_USER || "postgres",
+                    password: process.env.HRMS_DB_PASSWORD || "Secured3211",
+                },
+                query: "SELECT DISTINCT person_id, employee_id, first_name, middle_name, last_name, date_of_hire, job_title, supervisor_id, head_of_office_id, job_location_id, job_location, mobile_number, department_id, department_name, division_id, division_name, office_id, office_name, grade_id, grade, party_id, termination_date, job_status FROM apps.xxcbn_iam_employees_v WHERE (termination_date IS NULL OR termination_date = CURRENT_DATE OR termination_date > CURRENT_DATE) AND department_id <> '1129'",
+                // TODO: Add fields for incremental query if needed and supported by HRMS/adapter
+                // incrementalQuery: "SELECT ... WHERE last_updated_at > :lastRunTimestamp",
+                // timestampFieldForIncremental: "last_updated_at",
+                 uniqueIdentifierAttribute: "employee_id" // Use a standard field name for the unique ID from source
             },
-            metadata: { description: "Collect Employee Identities from Postgres View" }
-          };
-          
+            metadata: {
+                description: "Collect Employee Identities from Postgres View"
+            }
+        };
 
         // Data for the HRMS to IGLM User Mapping Config (Existing)
         const userMappingData = {

@@ -5,9 +5,9 @@ module.exports = {
   async up(queryInterface, Sequelize) {
     await queryInterface.createTable('CurrentAppStates', {
       id: {
+        type: Sequelize.UUID,
         allowNull: false,
         primaryKey: true,
-        type: Sequelize.UUID,
         defaultValue: Sequelize.literal('uuid_generate_v4()')
       },
       userId: {
@@ -15,7 +15,7 @@ module.exports = {
         allowNull: true,
         references: {
           model: 'Users',
-          key: 'id',
+          key: 'id'
         },
         onUpdate: 'CASCADE',
         onDelete: 'SET NULL'
@@ -25,65 +25,68 @@ module.exports = {
         allowNull: false,
         references: {
           model: 'Applications',
-          key: 'id',
+          key: 'id'
         },
         onUpdate: 'CASCADE',
         onDelete: 'CASCADE'
       },
       appSpecificUserId: {
         type: Sequelize.STRING,
-        allowNull: false
+        allowNull: false,
+        comment: 'User ID as represented in the external application.'
       },
       appSpecificEntitlementId: {
         type: Sequelize.STRING,
-        allowNull: false
+        allowNull: false,
+        comment: 'Entitlement ID as recognized by the external application.'
       },
       discoveredAt: {
         type: Sequelize.DATE,
         allowNull: false,
-        defaultValue: Sequelize.NOW
+        defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
+        comment: 'Timestamp when this state was discovered.'
       },
       runId: {
         type: Sequelize.UUID,
         allowNull: true,
         references: {
           model: 'DiscoveryRuns',
-          key: 'id',
+          key: 'id'
         },
         onUpdate: 'CASCADE',
         onDelete: 'SET NULL'
       },
       metadata: {
         type: Sequelize.JSONB,
-        allowNull: true
+        allowNull: true,
+        comment: 'Flexible metadata to store additional attributes as needed.'
       },
       createdAt: {
-        allowNull: false,
         type: Sequelize.DATE,
+        allowNull: false,
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP')
       },
       updatedAt: {
-        allowNull: false,
         type: Sequelize.DATE,
+        allowNull: false,
         defaultValue: Sequelize.literal('CURRENT_TIMESTAMP')
       }
     });
 
-    // --- Defensive Add Composite Unique Constraint ---
+    // Safely create a composite unique constraint
     try {
       await queryInterface.addConstraint('CurrentAppStates', {
         fields: ['applicationId', 'appSpecificUserId', 'appSpecificEntitlementId'],
         type: 'unique',
-        name: 'current_app_states_app_user_entitlement_unique_composite',
+        name: 'current_app_states_app_user_entitlement_unique_composite'
       });
     } catch (error) {
-      console.warn(`Warning: Skipping creation of unique constraint 'current_app_states_app_user_entitlement_unique_composite'. It may already exist.`, error.message);
+      console.warn(`[CurrentAppStates Migration] Warning: Could not create composite unique constraint.`, error.message);
     }
-    // --- End Defensive Composite Constraint Addition ---
   },
 
   async down(queryInterface, Sequelize) {
-    // Defensive cleanup: Remove constraints first
+    // Defensive constraint removal
     const constraints = [
       'current_app_states_app_user_entitlement_unique_composite',
       'CurrentAppStates_userId_fkey',
@@ -91,11 +94,11 @@ module.exports = {
       'CurrentAppStates_runId_fkey'
     ];
 
-    for (const constraintName of constraints) {
+    for (const constraint of constraints) {
       try {
-        await queryInterface.removeConstraint('CurrentAppStates', constraintName);
+        await queryInterface.removeConstraint('CurrentAppStates', constraint);
       } catch (error) {
-        console.warn(`Warning: Failed to remove constraint '${constraintName}':`, error.message);
+        console.warn(`[CurrentAppStates Migration] Warning: Failed to remove constraint '${constraint}'.`, error.message);
       }
     }
 

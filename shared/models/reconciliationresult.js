@@ -1,113 +1,117 @@
-// shared/models/reconciliationresult.js
 'use strict';
-const {
-  Model,
-  Sequelize // Import Sequelize object here
-} = require('sequelize');
+
+const { Model, Sequelize } = require('sequelize');
+
 module.exports = (sequelize, DataTypes) => {
   class ReconciliationResult extends Model {
     /**
-     * Helper method for defining associations.
-     * This method is not a part of Sequelize lifecycle.
-     * The `models/index` file will call this method automatically.
+     * Define associations for ReconciliationResult.
      */
     static associate(models) {
-      // define association here
-
-      // A reconciliation result belongs to a DiscoveryRun (required)
-      ReconciliationResult.belongsTo(models.DiscoveryRun, {
-        foreignKey: 'runId', // The foreign key in this table
-        as: 'discoveryRun', // Alias for association
-        allowNull: false, // Matches migration
-        // onDelete: 'CASCADE' is defined in migration
+      // Association: ReconciliationResult belongs to DiscoveryRun (required)
+      this.belongsTo(models.DiscoveryRun, {
+        foreignKey: {
+          name: 'runId',
+          allowNull: false
+        },
+        as: 'discoveryRun',
+        onDelete: 'CASCADE'
       });
 
-      // A reconciliation result can belong to a User (nullable)
-      ReconciliationResult.belongsTo(models.User, {
-        foreignKey: 'userId', // The foreign key in this table
-        as: 'user', // Alias for association
-        allowNull: true, // Matches migration (for orphaned accounts)
-        // onDelete: 'SET NULL' is defined in migration
+      // Association: ReconciliationResult belongs to User (optional)
+      this.belongsTo(models.User, {
+        foreignKey: {
+          name: 'userId',
+          allowNull: true
+        },
+        as: 'user',
+        onDelete: 'SET NULL'
       });
 
-      // A reconciliation result can belong to an Application (nullable)
-      ReconciliationResult.belongsTo(models.Application, {
-        foreignKey: 'applicationId', // The foreign key in this table
-        as: 'application', // Alias for association
-        allowNull: true, // Matches migration (for global discrepancies)
-        // onDelete: 'SET NULL' is defined in migration (or CASCADE depending on policy)
+      // Association: ReconciliationResult belongs to Application (optional)
+      this.belongsTo(models.Application, {
+        foreignKey: {
+          name: 'applicationId',
+          allowNull: true
+        },
+        as: 'application',
+        onDelete: 'SET NULL'
       });
-
-      // Note: appSpecificUserId and appSpecificEntitlementId are not FKs, just data fields.
     }
   }
-  ReconciliationResult.init({
-    id: {
-      type: DataTypes.UUID,
-      primaryKey: true,
-      allowNull: false, // Matches migration
-      defaultValue: Sequelize.literal('uuid_generate_v4()') // Matches migration
-    },
-    runId: {
-      type: DataTypes.UUID,
-      allowNull: false, // Matches migration
-      // --- Add references here in model for association definition ---
-      references: { // This is for Sequelize association, DB constraint is in migration
-        model: 'DiscoveryRun', // Model name (singular)
-        key: 'id'
+
+  ReconciliationResult.init(
+    {
+      id: {
+        type: DataTypes.UUID,
+        primaryKey: true,
+        allowNull: false,
+        defaultValue: Sequelize.literal('uuid_generate_v4()')
+      },
+      runId: {
+        type: DataTypes.UUID,
+        allowNull: false,
+        references: {
+          model: 'DiscoveryRuns', // Important: match table name not model name
+          key: 'id'
+        }
+      },
+      discrepancyType: {
+        type: DataTypes.STRING,
+        allowNull: false,
+        comment: 'Type of discrepancy: Violation, MissingAccess, OrphanedAccount, etc.'
+      },
+      userId: {
+        type: DataTypes.UUID,
+        allowNull: true,
+        references: {
+          model: 'Users',
+          key: 'id'
+        }
+      },
+      applicationId: {
+        type: DataTypes.UUID,
+        allowNull: true,
+        references: {
+          model: 'Applications',
+          key: 'id'
+        }
+      },
+      appSpecificUserId: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        comment: 'User identifier as recognized in external application (optional).'
+      },
+      appSpecificEntitlementId: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        comment: 'Entitlement identifier in external application (optional).'
+      },
+      details: {
+        type: DataTypes.JSONB,
+        allowNull: true,
+        comment: 'Flexible metadata associated with the reconciliation result.'
+      },
+      timestamp: {
+        type: DataTypes.DATE,
+        allowNull: false,
+        defaultValue: Sequelize.literal('CURRENT_TIMESTAMP'),
+        comment: 'Timestamp when the reconciliation result was detected.'
       }
-      // --- End references ---
     },
-    discrepancyType: {
-      type: DataTypes.STRING, // 'Violation', 'MissingAccess', 'OrphanedAccount'
-      allowNull: false // Matches migration
-    },
-    userId: {
-      type: DataTypes.UUID,
-      allowNull: true, // Matches migration
-       // --- Add references here in model for association definition ---
-      references: { // This is for Sequelize association, DB constraint is in migration
-        model: 'User', // Model name (singular)
-        key: 'id'
-      }
-      // --- End references ---
-    },
-    applicationId: {
-      type: DataTypes.UUID,
-      allowNull: true, // Matches migration
-       // --- Add references here in model for association definition ---
-      references: { // This is for Sequelize association, DB constraint is in migration
-        model: 'Application', // Model name (singular)
-        key: 'id'
-      }
-      // --- End references ---
-    },
-    appSpecificUserId: {
-      type: DataTypes.STRING,
-      allowNull: true // Matches migration (can be null for some discrepancy types like global missing access)
-    },
-    appSpecificEntitlementId: {
-      type: DataTypes.STRING,
-      allowNull: true // Matches migration (can be null for some discrepancy types like orphaned accounts not linked to entitlements)
-    },
-    details: {
-      type: DataTypes.JSONB,
-      allowNull: true // Matches migration
-    },
-    timestamp: {
-      type: DataTypes.DATE,
-      allowNull: false, // Matches migration
-      defaultValue: Sequelize.NOW // Matches migration
+    {
+      sequelize,
+      modelName: 'ReconciliationResult',
+      tableName: 'ReconciliationResults',
+      timestamps: true, // Adds createdAt, updatedAt
+      underscored: false, // Use camelCase
+      indexes: [
+        { fields: ['runId'], name: 'idx_reconciliationresults_runid' },
+        { fields: ['userId'], name: 'idx_reconciliationresults_userid' },
+        { fields: ['applicationId'], name: 'idx_reconciliationresults_applicationid' }
+      ]
     }
-  }, {
-    sequelize,
-    modelName: 'ReconciliationResult',
-    tableName: 'ReconciliationResults', // Explicitly define table name
-    timestamps: true, // Handles createdAt and updatedAt
-    underscored: false, // Ensure column names match attribute names
-    // ReconciliationResult doesn't have a composite unique index spanning all columns,
-    // as multiple discrepancies can be related to the same user/app/entitlement over time or from different runs.
-    // Uniqueness is typically on a per-run basis implicitly via querying by runId.
-  });
+  );
+
   return ReconciliationResult;
 };

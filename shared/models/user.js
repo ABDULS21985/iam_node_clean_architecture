@@ -85,7 +85,8 @@ module.exports = (sequelize, DataTypes) => {
     sequelize,
     modelName: 'User',
     tableName: 'Users', // Explicitly define table name (optional but good practice)
-    timestamps: true // Ensure createdAt and updatedAt are handled
+    timestamps: true, // Ensure createdAt and updatedAt are handled
+    underscored: false, // Use snake_case for column names
     // By default Sequelize pluralizes model name for table name, which is 'Users'
   });
   return User;

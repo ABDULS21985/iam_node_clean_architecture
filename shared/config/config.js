@@ -40,7 +40,7 @@ module.exports = {
 
   test: {
     username: process.env.TEST_DB_USER || 'iglm_config_user_test',
-    password: process.env.TEST_DB_PASSWORD || 'password',
+    password: process.env.TEST_DB_PASSWORD || 'Secured3211',
     database: process.env.TEST_DB_NAME || 'iglm_config_test',
     host:     process.env.TEST_DB_HOST || 'localhost',
     port:     process.env.TEST_DB_PORT || 5432,
