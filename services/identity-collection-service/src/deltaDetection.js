@@ -1,74 +1,172 @@
-// services/identity-collection-service/src/deltaDetection.js
-
 /**
- * Compares a previous snapshot of HRMS data with a current one to detect deltas (Joiners, Movers, Leavers).
- * Snapshots are assumed to be Maps or objects keyed by the HRMS unique identifier.
- *
- * @param {object} previousSnapshotMap - Map of HRMS records from the previous successful run (keyed by uniqueIdField).
- * @param {object} currentSnapshotMap - Map of HRMS records from the current collection run (keyed by uniqueIdField).
- * @param {string} uniqueIdField - The name of the HRMS attribute used as the unique identifier key in the maps.
- * @returns {{joiners: Array<object>, movers: Array<object>, leavers: Array<object>}} Object containing arrays of delta records.
- * @throws {Error} If input is invalid.
+ * Enhanced Delta-Detection Utility
+ * ------------------------------------------------------------
+ * Compares two HRMS snapshots and detects changes with improved:
+ * - Field-level comparison for movers
+ * - Debugging capabilities
+ * - Performance optimizations
  */
+
 function compareSnapshots(previousSnapshotMap, currentSnapshotMap, uniqueIdField) {
-    console.log(`[DeltaDetection] Starting snapshot comparison using unique field "${uniqueIdField}".`);
-
-    if (typeof previousSnapshotMap !== 'object' || previousSnapshotMap === null ||
-        typeof currentSnapshotMap !== 'object' || currentSnapshotMap === null ||
-        typeof uniqueIdField !== 'string' || !uniqueIdField) {
-        throw new Error("Invalid input for compareSnapshots. Snapshots must be objects, uniqueIdField a non-empty string.");
+    const svc = 'DeltaDetection';
+  
+    /* ---------- 0. Input Validation ---------- */
+    if (
+      !previousSnapshotMap || typeof previousSnapshotMap !== 'object' ||
+      !currentSnapshotMap || typeof currentSnapshotMap !== 'object' ||
+      typeof uniqueIdField !== 'string' || !uniqueIdField.trim()
+    ) {
+      throw new Error(`${svc} › Invalid arguments`);
     }
-
-    const joiners = [];
-    const movers = [];
-    const leavers = [];
-
-    const previousKeys = Object.keys(previousSnapshotMap);
-    const currentKeys = Object.keys(currentSnapshotMap);
-
-    const previousKeySet = new Set(previousKeys);
-    const currentKeySet = new Set(currentKeys);
-
-    // 1. Find Joiners: Keys in currentSnapshotMap but not in previousSnapshotMap
-    for (const key of currentKeys) {
-        if (!previousKeySet.has(key)) {
-            console.log(`[DeltaDetection] Found Joiner (new key): ${key}`);
-            joiners.push(currentSnapshotMap[key]);
+  
+    console.log(`[${svc}] Starting comparison with UID field "${uniqueIdField}"`);
+    console.log(`[${svc}] Previous records: ${Object.keys(previousSnapshotMap).length} | Current records: ${Object.keys(currentSnapshotMap).length}`);
+  
+    /* ---------- 1. Initialize Results ---------- */
+    const results = {
+      joiners: [],
+      movers: [],
+      leavers: [],
+      unchanged: 0,
+      changeDetails: {}
+    };
+  
+    const prevKeys = new Set(Object.keys(previousSnapshotMap));
+    const currKeys = new Set(Object.keys(currentSnapshotMap));
+  
+    /* ---------- 2. Debug Initial State ---------- */
+    if (process.env.DEBUG_DELTA) {
+      console.debug(`[${svc}] Sample previous records:`, 
+        Array.from(prevKeys).slice(0, 3).map(id => ({ id, ...previousSnapshotMap[id] })));
+      console.debug(`[${svc}] Sample current records:`, 
+        Array.from(currKeys).slice(0, 3).map(id => ({ id, ...currentSnapshotMap[id] })));
+    }
+  
+    /* ---------- 3. Detect Changes ---------- */
+    // Track all processed IDs to detect joiners efficiently
+    const processedIds = new Set();
+  
+    // First pass: Check for leavers and changed records (movers)
+    for (const id of prevKeys) {
+      const prevRec = previousSnapshotMap[id];
+      
+      if (!currKeys.has(id)) {
+        // Leaver detected
+        results.leavers.push(prevRec);
+        results.changeDetails[id] = { type: 'leaver', timestamp: new Date() };
+        continue;
+      }
+  
+      // Record exists in both snapshots - check for changes
+      processedIds.add(id);
+      const currRec = currentSnapshotMap[id];
+      const changes = findRecordChanges(prevRec, currRec);
+  
+      if (changes.length > 0) {
+        results.movers.push({
+          id,
+          previous: prevRec,
+          current: currRec,
+          changedFields: changes
+        });
+        results.changeDetails[id] = {
+          type: 'mover',
+          changedFields: changes,
+          timestamp: new Date()
+        };
+      } else {
+        results.unchanged++;
+      }
+    }
+  
+    // Second pass: Detect joiners (records in current but not previous)
+    for (const id of currKeys) {
+      if (!processedIds.has(id) && !prevKeys.has(id)) {
+        results.joiners.push(currentSnapshotMap[id]);
+        results.changeDetails[id] = { type: 'joiner', timestamp: new Date() };
+      }
+    }
+  
+    /* ---------- 4. Final Reporting ---------- */
+    console.log(`[${svc}] Results - Joiners: ${results.joiners.length}, ` +
+      `Movers: ${results.movers.length}, Leavers: ${results.leavers.length}, ` +
+      `Unchanged: ${results.unchanged}`);
+  
+    if (process.env.DEBUG_DELTA && results.movers.length > 0) {
+      console.debug(`[${svc}] Sample changes:`, 
+        results.movers.slice(0, 3).map(m => ({
+          id: m.id,
+          changes: m.changedFields
+        })));
+    }
+  
+    return results;
+  }
+  
+  /**
+   * Performs detailed field-by-field comparison between two records
+   */
+  function findRecordChanges(prevRec, currRec) {
+    const changes = [];
+    const allFields = new Set([
+      ...Object.keys(prevRec || {}),
+      ...Object.keys(currRec || {})
+    ]);
+  
+    for (const field of allFields) {
+      const prevValue = prevRec[field];
+      const currValue = currRec[field];
+  
+      // Handle special cases
+      if (field === 'termination_date' || field === 'date_of_hire') {
+        if (!dateEquals(prevValue, currValue)) {
+          changes.push(field);
         }
+        continue;
+      }
+  
+      // General comparison
+      if (!deepEqual(prevValue, currValue)) {
+        changes.push(field);
+      }
     }
-
-    // 2. Find Leavers: Keys in previousSnapshotMap but not in currentSnapshotMap
-    for (const key of previousKeys) {
-        if (!currentKeySet.has(key)) {
-            console.log(`[DeltaDetection] Found Leaver (missing key): ${key}`);
-            leavers.push(previousSnapshotMap[key]); // Return the record as it was in the previous snapshot
-        }
+  
+    return changes;
+  }
+  
+  /**
+   * Deep comparison of values (handles objects, arrays, dates)
+   */
+  function deepEqual(a, b) {
+    if (a === b) return true;
+    if (typeof a !== typeof b) return false;
+    
+    if (a instanceof Date && b instanceof Date) {
+      return a.getTime() === b.getTime();
     }
-
-    // 3. Find Movers: Keys present in both, but data has changed
-    // IMPORTANT: This is a simple comparison (JSON.stringify). A more robust approach
-    // would compare specific attributes flagged as 'mover' relevant in the MappingConfig.
-    for (const key of currentKeys) {
-        if (previousKeySet.has(key)) { // If the key exists in both
-            const previousRecord = previousSnapshotMap[key];
-            const currentRecord = currentSnapshotMap[key];
-
-            // Simple deep comparison by stringifying
-            const previousString = JSON.stringify(previousRecord);
-            const currentString = JSON.stringify(currentRecord);
-
-            if (previousString !== currentString) {
-                 console.log(`[DeltaDetection] Found Mover (data changed for key): ${key}`);
-                movers.push(currentRecord); // Return the updated record
-            }
-        }
+  
+    if (typeof a === 'object' && a !== null && b !== null) {
+      const aKeys = Object.keys(a);
+      const bKeys = Object.keys(b);
+      if (aKeys.length !== bKeys.length) return false;
+      
+      return aKeys.every(key => deepEqual(a[key], b[key]));
     }
-
-    console.log(`[DeltaDetection] Snapshot comparison completed. Joiners: ${joiners.length}, Movers: ${movers.length}, Leavers: ${leavers.length}`);
-
-    return { joiners, movers, leavers };
-}
-
-module.exports = {
-  compareSnapshots,
-};
+  
+    return false;
+  }
+  
+  /**
+   * Special date comparison handling
+   */
+  function dateEquals(date1, date2) {
+    if (date1 === date2) return true;
+    if (!date1 || !date2) return false;
+    
+    const d1 = date1 instanceof Date ? date1 : new Date(date1);
+    const d2 = date2 instanceof Date ? date2 : new Date(date2);
+    
+    return d1.getTime() === d2.getTime();
+  }
+  
+  module.exports = { compareSnapshots };
