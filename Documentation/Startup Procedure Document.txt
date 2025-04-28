@@ -1,0 +1,109 @@
+Startup Procedure Document
+Project: Identity Governance Lifecycle Management (IGLM)
+Version: 1.0
+Date: April 28, 2025
+Owner: Platform Engineering Team
+
+Objective
+This document outlines the structured and repeatable startup sequence to initialize the Identity Governance Lifecycle Management (IGLM) platform services, prepare underlying databases, execute required database migrations, seed configuration data, and start the application server.
+
+Prerequisites
+Docker and Docker Compose installed and configured on the host system.
+
+Node.js and npx utilities available in the execution environment.
+
+Project repository cloned locally and dependencies installed (npm install).
+
+Network access and sufficient permissions to connect to PostgreSQL, Redis, RabbitMQ, and Consul services.
+
+Startup Procedure
+1. Shutdown Any Existing Containers
+Decommission all existing service containers, remove associated volumes, and orphaned containers to ensure a clean environment.
+
+bash
+Copy code
+docker compose -f deploy/docker-compose.yml down -v --remove-orphans
+2. Start Core Infrastructure Services
+Initialize the core database, message broker, caching, and service discovery layers.
+
+bash
+Copy code
+docker compose -f deploy/docker-compose.yml up -d \
+  hrms-db \
+  config-db \
+  joiner-db \
+  mover-db \
+  leaver-db \
+  provisioning-db \
+  redis \
+  rabbitmq \
+  consul
+3. Initialize PostgreSQL Extensions
+Manually connect to the config-db instance and ensure the UUID generation extension is enabled.
+
+bash
+Copy code
+docker exec -it iglm-config-db psql -U postgres -d idcs_dev
+Once connected to the database, execute the following SQL command:
+
+sql
+Copy code
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+Exit the database session after successful execution.
+
+4. Database Migration Management
+Perform database migration rollbacks and redeploy migrations to synchronize database schemas.
+
+bash
+Copy code
+npx sequelize-cli db:migrate:undo --env development
+npx sequelize-cli db:migrate     --env development
+npx sequelize-cli db:migrate     --env development_idcs
+Note:
+
+development targets the primary application databases.
+
+development_idcs targets configuration databases specifically for the IDCS module.
+
+5. Seed Configuration Data
+Execute scripts to insert default configurations and application discovery metadata into the system.
+
+bash
+Copy code
+node scripts/setupConfigs.js
+node scripts/setupApplicationDiscoveryConfigs.js
+6. Reset Redis Cache
+Flush all Redis keys to ensure the cache is clean and consistent for the environment initialization.
+
+bash
+Copy code
+docker exec -it iglm-redis redis-cli -a Secured3211 FLUSHALL
+7. Launch the Application Server
+Start the Node.js application server to complete the startup process.
+
+bash
+Copy code
+node src/server.js
+Post-Startup Validation Checklist
+✅ All Docker containers are healthy and operational (docker ps).
+
+✅ Database connections established successfully.
+
+✅ Redis cache cleared and accessible.
+
+✅ RabbitMQ queues and exchanges initialized (validate via RabbitMQ Management Console).
+
+✅ Consul services registered and visible.
+
+✅ Application server logs indicate successful startup (Server running on port xxxx).
+
+Additional Notes
+Any failure during migration or script execution must be remediated before proceeding to application startup.
+
+Always validate environment-specific .env files prior to startup.
+
+Ensure time synchronization across services to prevent token/session validation issues.
+
+End of Document
+© 2025 Platform Engineering Team | Confidential and Proprietary
+

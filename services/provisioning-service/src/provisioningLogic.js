@@ -9,10 +9,27 @@ const path = require('path');
 // const models = require('../shared/models'); // Accessed via options.models
 // const TemporaryStorage = require('../shared/temporaryStorage'); // Accessed via options.temporaryStorage
 
-// ProvisioningAdapterLoader - Handles dynamic loading of connector adapters
-// Assuming this module exists and has a method like loadAdapter(type)
-// If not using a dedicated loader, direct require is used as a fallback below.
-// const ProvisioningAdapterLoader = require('./provisioningAdapterLoader');
+
+// --- Adapter Cleanup Registry ---
+// Set to store asynchronous cleanup functions provided by adapters that manage connections/resources.
+// Each adapter module that needs graceful shutdown should register its cleanup function here.
+const adapterCleanupFunctions = new Set();
+
+/**
+ * Allows a provisioning adapter module to register an asynchronous cleanup function.
+ * This function will be called during ProvisioningLogic shutdown.
+ * Adapter modules that manage connection pools or other long-lived resources should use this.
+ * @param {Function} cleanupFunc - An async function that performs cleanup (e.g., closing connection pools).
+ */
+const registerCleanup = (cleanupFunc) => {
+    if (typeof cleanupFunc === 'function') {
+        adapterCleanupFunctions.add(cleanupFunc);
+        // console.log(`[ProvisioningLogic] Registered cleanup function.`); // Optional debug log
+    } else {
+        // console.warn(`[ProvisioningLogic] Attempted to register non-function as cleanup.`); // Optional warn log
+    }
+};
+// --- End Adapter Cleanup Registry ---
 
 
 // Helper function to get a value from a nested object path (copied locally)
@@ -141,12 +158,10 @@ async function processProvisioningTask(taskId, options) {
     const serviceName = 'provisioning-service'; // Service identifier (can also get from logger.defaultMeta)
 
     let task; // Variable to hold the ProvisioningTask log entry
-    let user;
-    const applicationProvisioningResults = {}; // Track success/failure and results per application
-    const errorsPerApplication = {}; // Collect detailed errors per application
+    let user; // Variable to hold the IGLM User model instance
+    const applicationProvisioningResults = {}; // Track success/failure and results per application {appId: { status: 'success'|'failed'|'skipped', result: {...}, error?: {...} }}
+    const errorsPerApplication = {}; // Collect detailed errors per application {appId: { message?: string, stack?: string, operations?: [...] }}
     let overallTaskStatus = 'failed'; // Default to failed if not completed
-    let taskPayload = null; // Store the original payload from the task
-    let taskType = null; // 'grant' or 'revoke'
 
 
     try {
@@ -168,12 +183,14 @@ async function processProvisioningTask(taskId, options) {
             // Task record doesn't exist, so we can't update its status in the DB.
             // We might need to publish a separate critical error event or rely on external monitoring.
             // For now, just log and return. The worker should NACK and potentially move to DLQ.
+            // A task not found probably implies a race condition or data loss. NACK false, false is safest.
             return;
         }
 
         // Check task status - only process pending or in_progress tasks.
         // 'retrying' status could be handled by the worker itself using DLQ.
-        if (task.status !== 'pending' && task.status !== 'in_progress') { // Don't process 'completed', 'failed', 'cancelled', 'retrying' here
+        // 'cancelled' status is handled by checking the status and not processing.
+        if (task.status !== 'pending' && task.status !== 'in_progress') { // Don't process 'completed', 'failed', 'cancelled' here
              logger.warn(`Task ${taskId} is already in status '${task.status}'. Skipping processing.`, { taskId, status: task.status });
              // If the task status is 'retrying' (set by a DLQ process), the worker might requeue it, and we'd re-enter here.
              // The logic below should be idempotent to handle retries of in_progress tasks.
@@ -189,8 +206,8 @@ async function processProvisioningTask(taskId, options) {
              logger.error(`Malformed desiredState in task ${taskId}: Missing type or payload.`, { taskId, desiredState: task.desiredState });
              errorsPerApplication['system'] = { message: 'Malformed task payload in DB: Missing type or payload' };
              overallTaskStatus = 'failed';
-             // Update task status immediately as we cannot proceed
-             await task.update({ status: overallTaskStatus, endTime: new Date(), errorDetails: errorsPerApplication });
+             // Attempt to update task status immediately as we cannot proceed
+             await task.update({ status: overallTaskStatus, endTime: new Date(), errorDetails: errorsPerApplication }).catch(dbErr => logger.error(`Database error updating task ${taskId} status to 'failed' due to malformed payload:`, dbErr));
              // Publish status update
              await publishTaskStatusEvent(task.id, overallTaskStatus, errorsPerApplication, applicationProvisioningResults, task.userId, user?.hrmsId, mqService, logger).catch(mqErr => logger.error(`Failed to publish task status event for ${taskId}:`, mqErr));
              return; // Exit processing
@@ -220,14 +237,17 @@ async function processProvisioningTask(taskId, options) {
         // This is needed for GRANT tasks to determine desired entitlements from roles.
         // For REVOKE tasks triggered by Reconciliation, the payload might already have the needed context.
         // Load anyway for consistency and access to user details for logging/mapping.
-        if (!User) { logger.error('User model not available in ProvisioningLogic.'); throw new Error("User model not available."); }
+        if (!User || !Role || !Entitlement || !RoleEntitlementMapping || !Application) {
+            logger.error('One or more required models are not available in ProvisioningLogic.');
+            throw new Error("Required models not available.");
+        }
         try {
             user = await User.findByPk(task.userId, {
-                include: { // Include necessary associations
+                include: { // Include necessary associations to get roles and their mapped entitlements
                     model: Role, as: 'roles', through: { attributes: ['assignmentDate', 'unassignmentDate'] },
                     include: {
                         model: Entitlement, as: 'entitlements', through: { model: RoleEntitlementMapping, attributes: ['assignmentType', 'metadata'] },
-                        include: { model: Application, as: 'application' }
+                        include: { model: Application, as: 'application' } // Include the Application for each Entitlement
                     }
                 }
             });
@@ -243,13 +263,13 @@ async function processProvisioningTask(taskId, options) {
             errorsPerApplication['system'] = { message: 'User not found in IGLM DB' }; // Attribute error to system
             overallTaskStatus = 'failed';
             // Update task status immediately as we cannot proceed
-            await task.update({ status: overallTaskStatus, endTime: new Date(), errorDetails: errorsPerApplication });
+            await task.update({ status: overallTaskStatus, endTime: new Date(), errorDetails: errorsPerApplication }).catch(dbErr => logger.error(`Database error updating task ${taskId} status to 'failed' due to user not found:`, dbErr));
              // Publish status update
             await publishTaskStatusEvent(task.id, overallTaskStatus, errorsPerApplication, applicationProvisioningResults, task.userId, user?.hrmsId, mqService, logger).catch(mqErr => logger.error(`Failed to publish task status event for ${taskId}:`, mqErr));
             return; // Exit processing
         } else if (!user && task.userId === null) {
              // This is an ORPHANED ACCOUNT task, which is valid (user exists in target but not IGLM)
-             logger.warn(`Task ${taskId} is for an orphaned account (UserID is null). Proceeding with application-specific context from payload.`);
+             logger.warn(`Task ${taskId} is for an orphaned account (UserID is null). Proceeding with application-specific context from payload.`, { taskId });
              // User object will be null, rely on payload for app user ID and context.
         } else { // User found (for grant tasks or non-orphan revoke tasks)
              logger.info(`Loaded user ${user.hrmsId} (ID: ${user.id}) with current roles and entitlements for task ${taskId}.`, { taskId, userId: user.id, userHrmsId: user.hrmsId });
@@ -257,7 +277,8 @@ async function processProvisioningTask(taskId, options) {
 
 
         // 3. Determine Affected Applications and relevant Entitlements to Grant/Revoke
-        const applicationsToProcessMap = new Map(); // { appId: { application, entitlementsToGrant: [], entitlementsToRevoke: [] } }
+        // The map will store lists of IGLM Entitlement details that need granting/revoking, grouped by Application ID.
+        const applicationsToProcessMap = new Map(); // { appId: { application: ApplicationModel, entitlementsToGrant: [], entitlementsToRevoke: [] } }
 
         if (taskType === 'grant') {
             // --- Logic for GRANT tasks (derive desired entitlements from roles) ---
@@ -267,7 +288,7 @@ async function processProvisioningTask(taskId, options) {
             // Iterate through the desired role names from the task's payload (received via API)
             for (const desiredRoleName of desiredRoleNames) {
                 // Find the Role model among the user's *loaded* roles (includes associations to entitlements/apps)
-                const role = user?.roles ? user.roles.find(r => r.name === desiredRoleName) : null; // Use optional chaining as user might be null for orphan tasks
+                const role = user?.roles ? user.roles.find(r => r.name === desiredRoleName) : null; // Use optional chaining as user might be null for orphan tasks (though grant tasks usually have a user)
 
                 if (role) {
                     // For each found desired role, collect its mapped entitlements
@@ -279,7 +300,8 @@ async function processProvisioningTask(taskId, options) {
                             if (application) {
                                 const appEntry = applicationsToProcessMap.get(application.id);
                                 if (!appEntry) {
-                                    applicationsToProcessMap.set(application.id, { application: application, entitlementsToGrant: [], entitlementsToRevoke: [] }); // Initialize grant/revoke arrays
+                                    // Initialize entry for this application
+                                    applicationsToProcessMap.set(application.id, { application: application, entitlementsToGrant: [], entitlementsToRevoke: [] });
                                 }
                                 // Add the IGLM Entitlement object and mapping attributes to the entitlementsToGrant list for this application
                                 applicationsToProcessMap.get(application.id).entitlementsToGrant.push({
@@ -293,24 +315,26 @@ async function processProvisioningTask(taskId, options) {
                                 });
                             } else {
                                 logger.warn(`Entitlement "${entitlement.name}" mapped to role "${role.name}" for task ${taskId} is missing Application details. Skipping.`, { taskId, roleId: role.id, entitlementId: entitlement.id });
+                                // TODO: Log this as a skipped operation for the task result?
                             }
                         }
                     } else if (role) {
                         logger.warn(`Role "${role.name}" (ID: ${role.id}) for task ${taskId} has no associated entitlements or entitlements property is not an array. Skipping.`, { taskId, roleId: role.id });
-                    } else { // Role name from payload not found among user's loaded roles (or user is null)
-                        logger.warn(`Desired role "${desiredRoleName}" for task ${taskId} not found in IGLM DB for user ${user?.hrmsId} (ID: ${user?.id}). Cannot process entitlements for this role.`, { taskId, userId: user?.id, roleName: desiredRoleName });
+                        // TODO: Log this as a skipped role for the task result?
+                    } else { // Role name from payload not found among user's loaded roles (or user is null, which is unexpected for grant tasks)
+                        logger.warn(`Desired role "${desiredRoleName}" for task ${taskId} not found among user's loaded roles for user ${user?.hrmsId} (ID: ${user?.id}). Cannot process entitlements for this role.`, { taskId, userId: user?.id, roleName: desiredRoleName });
+                        // TODO: Log this as a skipped role for the task result?
                     }
-                } else { // Role not found in the DB
+                } else { // Role not found in the DB at all
                     logger.warn(`Desired role "${desiredRoleName}" for task ${taskId} not found in IGLM DB. Cannot process entitlements for this role.`, { taskId, roleName: desiredRoleName });
+                     // TODO: Log this as a skipped role for the task result?
                 }
             }
             logger.info(`Determined entitlements to grant based on desired roles. Total unique applications affected: ${applicationsToProcessMap.size}.`, { taskId, appsCount: applicationsToProcessMap.size });
 
 
-            // For grant tasks, we don't determine entitlements to revoke here based on desired state vs current state.
-            // That comparison (identifying violations/orphans) is the responsibility of RECONCILIATION.
-            // The provisioning task triggered by a Joiner/Mover is only about implementing the *desired* state.
-            // If reconciliation finds discrepancies later, it will trigger *explicit revoke* tasks.
+            // For grant tasks, entitlementsToRevoke lists are initially empty.
+            // Revocation logic (identifying entitlements to remove) is handled by Reconciliation.
 
 
         } else if (taskType === 'revoke') {
@@ -321,34 +345,33 @@ async function processProvisioningTask(taskId, options) {
 
 
             if (!Array.isArray(entitlementsToRevokeFromPayload) || entitlementsToRevokeFromPayload.length === 0) {
-                // Malformed revoke task payload
+                // Malformed revoke task payload - Should be caught and marked failed before this point in server.js API
+                // Adding a check here for robustness in case worker gets a bad task from DB
                 logger.error(`Revoke task ${taskId} has missing or empty 'entitlementsToRevoke' array in payload. Cannot process.`, { taskId, payload: taskPayload });
                 errorsPerApplication['system'] = { message: 'Malformed revoke task payload in DB: Missing or empty entitlementsToRevoke array' };
                 overallTaskStatus = 'failed';
-                await task.update({ status: overallTaskStatus, endTime: new Date(), errorDetails: errorsPerApplication });
-                // Publish status update
-                await publishTaskStatusEvent(task.id, overallTaskStatus, errorsPerApplication, applicationProvisioningResults, task.userId, user?.hrmsId, mqService, logger).catch(mqErr => logger.error(`Failed to publish task status event for ${taskId}:`, mqErr));
+                await task.update({ status: overallTaskStatus, endTime: new Date(), errorDetails: errorsPerApplication }); // Update DB status
+                await publishTaskStatusEvent(task.id, overallTaskStatus, errorsPerApplication, applicationProvisioningResults, task.userId, user?.hrmsId, mqService, logger).catch(mqErr => logger.error(`Failed to publish task status event for ${taskId}:`, mqErr)); // Publish event
                 return; // Exit processing
             }
             logger.info(`Task ${taskId} is a REVOKE task. Processing explicit revocation for user ID ${userIdFromPayload || 'N/A'} with ${entitlementsToRevokeFromPayload.length} entitlements.`, { taskId, userId: userIdFromPayload, revokeCount: entitlementsToRevokeFromPayload.length });
 
             // Iterate through the explicit list of entitlements to revoke from the payload (from Reconciliation)
             for (const revokeItem of entitlementsToRevokeFromPayload) {
-                if (!revokeItem || !revokeItem.applicationId || (!revokeItem.iglmEntitlementId && !revokeItem.appSpecificEntitlementId)) {
-                    logger.warn(`Skipping malformed revoke item in payload for task ${taskId}. Missing applicationId or entitlement IDs.`, { taskId, revokeItem });
+                // Ensure each item has the minimum required fields for a revoke operation
+                if (!revokeItem || !revokeItem.applicationId || !revokeItem.appSpecificEntitlementId || !revokeItem.appSpecificUserId) { // appSpecificUserId is required for revoke
+                    logger.warn(`Skipping malformed revoke item in payload for task ${taskId}. Missing applicationId, appSpecificEntitlementId, or appSpecificUserId.`, { taskId, revokeItem });
                     // Log this specific malformed item as a partial error for the task result
-                    errorsPerApplication[revokeItem.applicationId || 'unknown_app'] = errorsPerApplication[revokeItem.applicationId || 'unknown_app'] || { message: 'Partial failure due to malformed revoke item in payload.' };
-                    errorsPerApplication[revokeItem.applicationId || 'unknown_app'].operations = errorsPerApplication[revokeItem.applicationId || 'unknown_app'].operations || [];
-                    errorsPerApplication[revokeItem.applicationId || 'unknown_app'].operations.push({
-                         status: 'skipped', message: 'Malformed revoke item in payload', item: revokeItem
+                    errorsPerApplication[revokeItem?.applicationId || 'unknown_app'] = errorsPerApplication[revokeItem?.applicationId || 'unknown_app'] || { message: 'Partial failure due to malformed revoke item in payload.', operations: [] };
+                    errorsPerApplication[revokeItem?.applicationId || 'unknown_app'].operations.push({
+                         status: 'skipped', message: 'Malformed revoke item in payload', item: revokeItem // Include the item for context
                     });
                     continue; // Skip to the next item in the payload
                 }
 
                 // Ensure the application for this revoke item is in the map
+                // Need to load the application details to add it to the map if not already present.
                 if (!applicationsToProcessMap.has(revokeItem.applicationId)) {
-                    // Need to load the application details to add it to the map
-                    if (!Application) { logger.error('Application model not available for revoke task app lookup.', { taskId, appId: revokeItem.applicationId }); throw new Error("Application model not available."); }
                     const app = await Application.findByPk(revokeItem.applicationId);
                     if (app) {
                         applicationsToProcessMap.set(app.id, { application: app, entitlementsToGrant: [], entitlementsToRevoke: [] }); // Initialize grant/revoke arrays
@@ -363,31 +386,31 @@ async function processProvisioningTask(taskId, options) {
                 // Add the item to the entitlementsToRevoke list for the corresponding application
                 // Store relevant details needed by the adapter
                 applicationsToProcessMap.get(revokeItem.applicationId).entitlementsToRevoke.push({
-                    iglmEntitlementId: revokeItem.iglmEntitlementId, // Might be null if not available in payload (e.g. for orphaned)
+                    iglmEntitlementId: revokeItem.iglmEntitlementId, // Might be null
+                    iglmEntitlementName: revokeItem.iglmEntitlementName, // Might be null
                     appSpecificEntitlementId: revokeItem.appSpecificEntitlementId, // Required for revoke
                     applicationId: revokeItem.applicationId,
                     appSpecificUserId: revokeItem.appSpecificUserId, // Required for revoke (especially orphans)
                     // Include any other context from the original revoke payload item needed by the adapter
-                    context: { ...revokeItem } // Store the full item as context
+                    context: { ...revokeItem } // Store the full item as context for adapter
                 });
-            }
+            } // End loop through entitlementsToRevokeFromPayload
             logger.info(`Determined entitlements to revoke based on task payload. Total unique applications affected: ${applicationsToProcessMap.size}.`, { taskId, appsCount: applicationsToProcessMap.size });
 
-            // For revoke tasks, entitlementsToGrant should be an empty array derived here.
-            // They are not derived from roles in a revoke task.
+            // For revoke tasks, entitlementsToGrant should be explicitly empty.
 
 
         } else {
-            // Unknown task type
+            // Unknown task type - Should be caught and marked failed before this point in server.js API
+            // Adding a check here for robustness in case worker gets a bad task from DB
             logger.error(`Unknown task type in desiredState for task ${taskId}: "${taskType}". Cannot process.`, { taskId, taskType: taskType, desiredState: task.desiredState });
             errorsPerApplication['system'] = { message: `Unknown task type: "${taskType}"` };
             overallTaskStatus = 'failed';
-            // Update task status immediately as we cannot proceed
-            await task.update({ status: overallTaskStatus, endTime: new Date(), errorDetails: errorsPerApplication });
-             // Publish status update
-            await publishTaskStatusEvent(task.id, overallTaskStatus, errorsPerApplication, applicationProvisioningResults, task.userId, user?.hrmsId, mqService, logger).catch(mqErr => logger.error(`Failed to publish task status event for ${taskId}:`, mqErr));
+            await task.update({ status: overallTaskStatus, endTime: new Date(), errorDetails: errorsPerApplication }); // Update DB status
+            await publishTaskStatusEvent(task.id, overallTaskStatus, errorsPerApplication, applicationProvisioningResults, task.userId, user?.hrmsId, mqService, logger).catch(mqErr => logger.error(`Failed to publish task status event for ${taskId}:`, mqErr)); // Publish event
             return; // Exit processing
         }
+
 
         // --- Orchestrate Provisioning per Application ---
         // Loop through the applications identified for processing (map built based on task type)
@@ -396,7 +419,8 @@ async function processProvisioningTask(taskId, options) {
         for (const [appId, appDetails] of applicationsToProcessMap.entries()) {
             const application = appDetails.application; // Application model instance
             const entitlementsToGrant = appDetails.entitlementsToGrant; // Array of { iglmEntitlementId, ..., appEntitlementId, mappingDetails: {...} }
-            const entitlementsToRevoke = appDetails.entitlementsToRevoke; // Array of { iglmEntitlementId?, appSpecificEntitlementId, ..., context: {...}, mappingDetails: {...} }
+            const entitlementsToRevoke = appDetails.entitlementsToRevoke; // Array of { iglmEntitlementId?, appSpecificEntitlementId, ..., context: {...} }
+            let appProvisioningStatus = 'failed'; // Status for this application
 
             logger.info(`Processing ${taskType} task for Application "${application.name}" (ID: ${application.id}). Grants: ${entitlementsToGrant.length}, Revokes: ${entitlementsToRevoke.length}`, { taskId: taskId, appId: appId, appName: application.name, grantsCount: entitlementsToGrant.length, revokesCount: entitlementsToRevoke.length });
 
@@ -404,35 +428,38 @@ async function processProvisioningTask(taskId, options) {
             if (entitlementsToGrant.length === 0 && entitlementsToRevoke.length === 0) {
                 logger.warn(`No entitlements to process (grant or revoke) for Application "${application.name}". Skipping adapter call.`, { taskId: taskId, appId: appId, appName: application.name });
                 applicationProvisioningResults[appId] = { status: 'skipped', message: 'No entitlements to process' };
+                // Note: overallTaskStatus remains true if all apps are skipped or succeed.
                 continue; // Skip to next application in the loop
             }
 
             let appConnectorConfig;
             let appMappingConfig; // Mapping from IGLM Entitlement ID -> App-specific Entitlement ID/Action
             let adapterCallResult = null; // Store the raw result from the adapter
-            let appProvisioningStatus = 'failed'; // Status for this application
+
 
             try {
                 // Load the Provisioning Connector Config for this application using ConfigService
-                if (!application.connectorId) {
+                // Get config ID from the Application model
+                const connectorId = application.connectorId;
+                 if (!connectorId) {
                     throw new Error(`Application "${application.name}" (ID: ${application.id}) has no connectorId configured.`);
                 }
-                // Clear cache before loading connector config
-                // Need to load by ID first, then use name/type for the keyed cache?
-                // Let's load by ID first for robustness.
-                 const connectorLookup = await ConfigService.sequelize.models.ConnectorConfig.findByPk(application.connectorId);
+                // Clear cache using the config ID (assuming configService supports loading/clearing by ID)
+                // If not, you might need to load by ID, then by Name/Type using the cacheKey function.
+                // Let's load by ID first for robustness and then use name/type for logging/cache.
+                 const connectorLookup = await ConfigService.sequelize.models.ConnectorConfig.findByPk(connectorId);
                  if (!connectorLookup) {
-                     throw new Error(`Provisioning Connector Config not found for ID: ${application.connectorId} linked to Application "${application.name}".`);
+                     throw new Error(`Provisioning Connector Config not found for ID: ${connectorId} linked to Application "${application.name}".`);
                  }
                  // Now clear cache using the name/type and reload from the robust ConfigService cache
+                 // Need to pass serviceType and type to loadConnectorConfig
                  const specificConnectorCacheKey = configService.connectorCacheKey(connectorLookup.name, connectorLookup.serviceType, connectorLookup.type);
                  configService.clearCache(specificConnectorCacheKey);
                  appConnectorConfig = await configService.loadConnectorConfig(connectorLookup.name, connectorLookup.serviceType, connectorLookup.type); // Reload using the loader/cache logic
 
                 if (!appConnectorConfig) { // Final check after robust load
-                    throw new Error(`Provisioning Connector Config "${connectorLookup.name}" (ID: ${application.connectorId}) linked to Application "${application.name}" failed to load robustly.`);
+                    throw new Error(`Provisioning Connector Config "${connectorLookup.name}" (ID: ${connectorId}) linked to Application "${application.name}" failed to load robustly.`);
                 }
-
 
                 if (appConnectorConfig.serviceType !== 'Provisioning') {
                     logger.warn(`Connector Config "${appConnectorConfig.name}" (ID: ${appConnectorConfig.id}) linked to Application "${application.name}" is not marked as serviceType 'Provisioning'. This might be a configuration error.`, { taskId: taskId, appId: appId, connectorId: appConnectorConfig.id });
@@ -442,7 +469,7 @@ async function processProvisioningTask(taskId, options) {
 
                 // Load the Application-specific Mapping Config (IGLM Entitlement ID -> App Entitlement ID/Action) using ConfigService
                 // Assumed MappingConfig entry with sourceType: 'Provisioning', sourceId: application.id, targetType: 'ApplicationEntitlements'
-                // Clear cache before loading mapping config
+                // Clear cache using the sourceId and targetType for this mapping
                 const mappingCacheKey = configService.mappingCacheKey(null, 'Provisioning', 'ApplicationEntitlements', null, application.id); // Mapping key using sourceType, targetType, sourceId
                 configService.clearCache(mappingCacheKey);
                 appMappingConfig = await configService.loadMappingConfig(null, 'Provisioning', 'ApplicationEntitlements', null, application.id); // Load by sourceType, targetType, sourceId
@@ -468,6 +495,8 @@ async function processProvisioningTask(taskId, options) {
                      // Use require relative to the current file's directory
                      const adapterModulePath = path.join(__dirname, `./connectors/provisioning/${appConnectorConfig.type}`);
                      connectorModule = require(adapterModulePath); // Fallback to direct require if loader not used
+                     // TODO: If using a dedicated adapter loader, use it here and ensure it handles caching/initialization/shutdown registration
+                     // connectorModule = await provisioningAdapterLoader.loadAdapter(appConnectorConfig.type, appConnectorConfig.configuration); // Example loader call
                 } catch (loaderError) {
                     logger.error(`Failed to load provisioning adapter module "${appConnectorConfig.type}".`, { taskId: taskId, appId: appId, connectorType: appConnectorConfig.type, error: loaderError.message, stack: loaderError.stack });
                     throw new Error(`Failed to load provisioning adapter module "${appConnectorConfig.type}": ${loaderError.message}`); // Re-throw
@@ -482,142 +511,152 @@ async function processProvisioningTask(taskId, options) {
 
 
                 // --- Prepare App-Specific Desired State for the Adapter ---
+                // The entitlementsToGrant and entitlementsToRevoke lists are already populated based on task type before this loop
 
                 // Determine the user identifier recognized by the target app using the mapping rule
                  // Pass logger to the helper function
-                const userIdInApp = determineAppUserIdentifier(user, appMappingConfig, logger); // <-- Pass logger
-                if (userIdInApp === null) {
-                    // This is a critical error for this specific application - cannot provision if user ID is unknown
-                    const errorMsg = `Cannot determine user identifier for Application "${application.name}" (ID: ${application.id}) for user ${user?.hrmsId} using configured mapping.`;
-                    logger.error(errorMsg, { taskId: taskId, userId: user?.id, appId: appId });
-                    throw new Error(errorMsg); // Re-throw
-                }
+                const userIdFromIglmUser = user ? determineAppUserIdentifier(user, appMappingConfig, logger) : null; // <-- Pass logger, optional chaining for user
+                // If this is a REVOKE task for an ORPHANED account, the userIdFromIglmUser will be null.
+                // Use the appSpecificUserId provided in the REVOKE task payload instead.
+                const finalUserIdInApp = (taskType === 'revoke' && taskPayload.appSpecificUserId) ? String(taskPayload.appSpecificUserId) : userIdFromIglmUser; // Ensure string
 
-                // For REVOKE tasks, the appSpecificUserId might come directly from the payload (e.g., orphan tasks).
-                // If the task is 'revoke' AND the payload has an 'appSpecificUserId', use that instead of deriving from the IGLM User object.
-                const finalUserIdInApp = (taskType === 'revoke' && taskPayload.appSpecificUserId) ? String(taskPayload.appSpecificUserId) : userIdInApp; // Ensure string
+                if (finalUserIdInApp === null) {
+                     // This is a critical error for this specific application - cannot provision if user ID is unknown
+                     const errorMsg = `Cannot determine final user identifier for Application "${application.name}" (ID: ${application.id}) for user ${user?.hrmsId} / task payload (type: ${taskType}).`;
+                     logger.error(errorMsg, { taskId: taskId, userId: user?.id, appId: appId, taskType: taskType, taskPayloadUserId: taskPayload.userId, taskPayloadAppUserId: taskPayload.appSpecificUserId });
+                     throw new Error(errorMsg); // Re-throw
+                }
 
 
                  // Map IGLM Entitlements to App-specific entitlements for granting and revoking
-                 // The lists entitlementsToGrant and entitlementsToRevoke are already populated above based on task type
+                 // The lists entitlementsToGrant and entitlementsToRevoke are already populated based on task type before this loop
                  // Now, map them using the application-specific mapping config (appMappingConfig)
                  const finalAppEntitlementsToGrantForAdapter = [];
                  const finalAppEntitlementsToRevokeForAdapter = [];
 
                  // --- Map Grants List for Adapter ---
-                 for (const item of entitlementsToGrant) { // items are { iglmEntitlementId, iglmEntitlementName, assignmentType, metadata, applicationId, applicationName, applicationEntitlementId }
-                      // item.applicationId == application.id check already done when building the map
-                      // Get mapped details from the app mapping config, falling back to defaults
-                      const mappedDetails = entitlementMappings[item.iglmEntitlementId] || {};
+                 if (entitlementsToGrant && Array.isArray(entitlementsToGrant)) {
+                     for (const item of entitlementsToGrant) { // items are { iglmEntitlementId, iglmEntitlementName, assignmentType, metadata, applicationId, applicationName, applicationEntitlementId }
+                          if (item.applicationId !== application.id) continue; // Ensure we only process entitlements for the current application
 
-                      // Get the actual app-specific ID, falling back to the Entitlement model if not in mapping
-                      let actualAppEntitlementId = mappedDetails.appEntitlementId;
-                      if (!actualAppEntitlementId && item.applicationEntitlementId) { // Fallback to app-specific ID from IGLM Entitlement model
-                           actualAppEntitlementId = item.applicationEntitlementId;
-                      }
+                          // Get mapped details from the app mapping config, falling back to defaults
+                          const mappedDetails = entitlementMappings[item.iglmEntitlementId] || {};
 
-                      if (!actualAppEntitlementId) {
-                           logger.warn(`Entitlement "${item.iglmEntitlementName}" (ID: ${item.iglmEntitlementId}) has no appEntitlementId in model or mapping config for App "${application.name}". Skipping grant.`, { taskId: taskId, appId: appId, iglmEntitlementId: item.iglmEntitlementId });
-                           applicationProvisioningResults[appId] = applicationProvisioningResults[appId] || { status: 'partial_success', result: { operations: [] } };
-                           applicationProvisioningResults[appId].result.operations.push({
-                               entitlement: item.iglmEntitlementName || 'Unknown Entitlement',
-                               status: 'skipped',
-                               message: 'Missing appEntitlementId in config/model',
-                               iglmEntitlementId: item.iglmEntitlementId
-                           });
-                           continue; // Skip this entitlement for the adapter call
-                      }
-
-                      // Determine the specific SQL template name or operation type for this entitlement grant
-                      const specificGrantTemplate = mappedDetails.sqlTemplateName || defaultGrantTemplateName;
-                      const specificGrantOperationType = mappedDetails.operationType || defaultOperationType; // Fallback to default op type
-
-                      if (!specificGrantTemplate && !specificGrantOperationType) {
-                           logger.warn(`Entitlement "${item.iglmEntitlementName}" (ID: ${item.iglmEntitlementId}, App ID: ${actualAppEntitlementId}) has no grant template/operation type defined in mapping config and no default for App "${application.name}". Skipping grant.`, { taskId: taskId, appId: appId, iglmEntitlementId: item.iglmEntitlementId, appEntitlementId: actualAppEntitlementId });
-                           applicationProvisioningResults[appId] = applicationProvisioningResults[appId] || { status: 'partial_success', result: { operations: [] } };
-                           applicationProvisioningResults[appId].result.operations.push({
-                               entitlement: item.iglmEntitlementName || 'Unknown Entitlement',
-                               appEntitlementId: actualAppEntitlementId,
-                               status: 'skipped',
-                               message: 'Missing SQL template/operation type in config',
-                               iglmEntitlementId: item.iglmEntitlementId
-                           });
-                           continue;
-                      }
-
-                      // Construct the object for this specific entitlement grant for the adapter
-                      finalAppEntitlementsToGrantForAdapter.push({
-                          iglmEntitlementId: item.iglmEntitlementId,
-                          iglmEntitlementName: item.iglmEntitlementName,
-                          appEntitlementId: actualAppEntitlementId, // The actual ID used by the target app
-                          assignmentType: item.assignmentType, // From RoleEntitlementMapping metadata
-                          metadata: item.metadata, // From RoleEntitlementMapping metadata
-                          mappingDetails: { // Include details from the app mapping config relevant to the adapter
-                               sqlTemplateName: specificGrantTemplate,
-                               operationType: specificGrantOperationType,
-                               // Add any other relevant mapping details needed by the adapter from mappedDetails
-                               ...mappedDetails // Include all mapped details
+                          // Get the actual app-specific ID, falling back to the Entitlement model if not in mapping
+                          let actualAppEntitlementId = mappedDetails.appEntitlementId;
+                          if (!actualAppEntitlementId && item.applicationEntitlementId) { // Fallback to app-specific ID from IGLM Entitlement model
+                               actualAppEntitlementId = item.applicationEntitlementId;
                           }
-                      });
-                 } // End loop through entitlementsToGrant
+
+                          if (!actualAppEntitlementId) {
+                               logger.warn(`Entitlement "${item.iglmEntitlementName}" (ID: ${item.iglmEntitlementId}) has no appEntitlementId in model or mapping config for App "${application.name}". Skipping grant.`, { taskId: taskId, appId: appId, iglmEntitlementId: item.iglmEntitlementId });
+                               applicationProvisioningResults[appId] = applicationProvisioningResults[appId] || { status: 'partial_success', result: { operations: [] } };
+                               applicationProvisioningResults[appId].result.operations.push({
+                                   entitlement: item.iglmEntitlementName || 'Unknown Entitlement',
+                                   status: 'skipped',
+                                   message: 'Missing appEntitlementId in config/model',
+                                   iglmEntitlementId: item.iglmEntitlementId
+                               });
+                               continue; // Skip this entitlement for the adapter call
+                          }
+
+                          // Determine the specific SQL template name or operation type for this entitlement grant
+                          const specificGrantTemplate = mappedDetails.sqlTemplateName || defaultGrantTemplateName;
+                          const specificGrantOperationType = mappedDetails.operationType || defaultOperationType; // Fallback to default op type
+
+                          if (!specificGrantTemplate && !specificGrantOperationType) {
+                               logger.warn(`Entitlement "${item.iglmEntitlementName}" (ID: ${item.iglmEntitlementId}, App ID: ${actualAppEntitlementId}) has no grant template/operation type defined in mapping config and no default for App "${application.name}". Skipping grant.`, { taskId: taskId, appId: appId, iglmEntitlementId: item.iglmEntitlementId, appEntitlementId: actualAppEntitlementId });
+                               applicationProvisioningResults[appId] = applicationProvisioningResults[appId] || { status: 'partial_success', result: { operations: [] } };
+                               applicationProvisioningResults[appId].result.operations.push({
+                                   entitlement: item.iglmEntitlementName || 'Unknown Entitlement',
+                                   appEntitlementId: actualAppEntitlementId,
+                                   status: 'skipped',
+                                   message: 'Missing SQL template/operation type in config',
+                                   iglmEntitlementId: item.iglmEntitlementId
+                               });
+                               continue;
+                          }
+
+                          // Construct the object for this specific entitlement grant for the adapter
+                          finalAppEntitlementsToGrantForAdapter.push({
+                              iglmEntitlementId: item.iglmEntitlementId,
+                              iglmEntitlementName: item.iglmEntitlementName,
+                              appEntitlementId: actualAppEntitlementId, // The actual ID used by the target app
+                              assignmentType: item.assignmentType, // From RoleEntitlementMapping metadata
+                              metadata: item.metadata, // From RoleEntitlementMapping metadata
+                              mappingDetails: { // Include details from the app mapping config relevant to the adapter
+                                   sqlTemplateName: specificGrantTemplate,
+                                   operationType: specificGrantOperationType,
+                                   // Add any other relevant mapping details needed by the adapter from mappedDetails
+                                   ...mappedDetails // Include all mapped details
+                              }
+                          });
+                     } // End loop through entitlementsToGrant
+                 }
 
 
                  // --- Map Revokes List for Adapter ---
-                 for (const item of entitlementsToRevoke) { // items are { iglmEntitlementId?, appSpecificEntitlementId, applicationId, appSpecificUserId?, ...other_context_from_payload }
-                       // item.applicationId == application.id check already done when building the map
-                       // For revoke tasks, the payload directly provides app-specific IDs.
-                       // We still need the mapping config for revoke templates/operations.
-                       // Look up mapping details by IGLM Entitlement ID if available, otherwise use app ID
-                       const mappedDetails = item.iglmEntitlementId ? (entitlementMappings[item.iglmEntitlementId] || {}) : {};
+                 if (entitlementsToRevoke && Array.isArray(entitlementsToRevoke)) {
+                     for (const item of entitlementsToRevoke) { // items are { iglmEntitlementId?, appSpecificEntitlementId, applicationId, appSpecificUserId?, ...other_context_from_payload }
+                          // item.applicationId == application.id check already done when building the map
+                          // For revoke tasks, the payload directly provides app-specific IDs.
+                          // We still need the mapping config for revoke templates/operations.
+                          // Look up mapping details by IGLM Entitlement ID if available, otherwise use app ID
+                          const mappedDetails = item.iglmEntitlementId ? (entitlementMappings[item.iglmEntitlementId] || {}) : {};
 
-                       const actualAppEntitlementId = item.appSpecificEntitlementId; // Revoke payload *must* provide the app-specific ID
-                       if (!actualAppEntitlementId) {
-                            logger.warn(`Revoke item missing required 'appSpecificEntitlementId' in payload for App "${application.name}". Skipping revoke.`, { taskId: taskId, appId: appId, revokeItem: item });
-                             applicationProvisioningResults[appId] = applicationProvisioningResults[appId] || { status: 'partial_success', result: { operations: [] } };
-                             applicationProvisioningResults[appId].result.operations.push({
-                                entitlement: item.iglmEntitlementName || 'Unknown Entitlement',
-                                status: 'skipped',
-                                message: 'Missing appSpecificEntitlementId in payload',
-                                // Don't include the item itself in error details if sensitive
-                             });
-                            continue;
-                       }
-
-                       // Determine the specific SQL template name or operation type for this entitlement revoke
-                       // Prioritize revoke-specific template from mapping, then general template, then default revoke, then default grant
-                       const specificRevokeTemplate = mappedDetails.revokeSqlTemplateName || mappedDetails.sqlTemplateName || defaultRevokeTemplateName || defaultGrantTemplateName; // Fallback to grant template if no specific revoke
-                       const specificRevokeOperationType = mappedDetails.revokeOperationType || mappedDetails.operationType || defaultOperationType;
+                          const actualAppEntitlementId = item.appSpecificEntitlementId; // Revoke payload *must* provide the app-specific ID
+                          const actualAppSpecificUserId = item.appSpecificUserId; // Revoke payload *must* provide the app-specific User ID
 
 
-                       if (!specificRevokeTemplate && !specificRevokeOperationType) {
-                            logger.warn(`Revoke entitlement (App ID: ${actualAppEntitlementId}) has no revoke template/operation type defined in mapping config and no default for App "${application.name}". Skipping revoke.`, { taskId: taskId, appId: appId, appEntitlementId: actualAppEntitlementId });
-                            applicationProvisioningResults[appId] = applicationProvisioningResults[appId] || { status: 'partial_success', result: { operations: [] } };
-                            applicationProvisioningResults[appId].result.operations.push({
-                               appSpecificEntitlementId: actualAppEntitlementId,
-                               entitlement: item.iglmEntitlementName || 'Unknown Entitlement',
-                               status: 'skipped',
-                               message: 'Missing revoke SQL template/operation type in config',
-                               iglmEntitlementId: item.iglmEntitlementId
-                            });
-                            continue;
-                       }
+                          if (!actualAppEntitlementId || !actualAppSpecificUserId) { // Check both required revoke identifiers
+                               logger.warn(`Revoke item missing required 'appSpecificEntitlementId' or 'appSpecificUserId' in payload for App "${application.name}". Skipping revoke.`, { taskId: taskId, appId: appId, revokeItem: item });
+                                applicationProvisioningResults[appId] = applicationProvisioningResults[appId] || { status: 'partial_failure', result: { operations: [] } }; // Use partial_failure for skipped revokes
+                                applicationProvisioningResults[appId].result.operations.push({
+                                   entitlement: item.iglmEntitlementName || item.appSpecificEntitlementId || 'Unknown Entitlement',
+                                   status: 'skipped',
+                                   message: 'Missing appSpecificEntitlementId or appSpecificUserId in payload',
+                                   // Don't include the item itself in error details if sensitive
+                                });
+                               continue;
+                          }
 
-                        // Construct the object for this specific entitlement revoke for the adapter
-                       finalAppEntitlementsToRevokeForAdapter.push({
-                           iglmEntitlementId: item.iglmEntitlementId, // Might be null if not available in payload
-                           iglmEntitlementName: item.iglmEntitlementName, // Might be null if not available in payload
-                           appEntitlementId: actualAppEntitlementId, // The actual ID used by the target app
-                           // assignmentType/metadata might not be relevant for revokes, or come from the revoke payload context
-                           mappingDetails: { // Include details relevant to the adapter
-                                sqlTemplateName: specificRevokeTemplate,
-                                operationType: specificRevokeOperationType,
-                                // Add any other relevant mapping details needed by the adapter from mappedDetails
-                                ...mappedDetails // Include all mapped details
-                           },
-                           // Include any other context from the original revoke payload item
-                           context: { ...item } // Store the full item as context for adapter
-                       });
-                    } // End loop through entitlementsToRevoke
+                          // Determine the specific SQL template name or operation type for this entitlement revoke
+                          // Prioritize revoke-specific template from mapping, then general template, then default revoke, then default grant
+                          const specificRevokeTemplate = mappedDetails.revokeSqlTemplateName || mappedDetails.sqlTemplateName || defaultRevokeTemplateName || defaultGrantTemplateName;
+                          const specificRevokeOperationType = mappedDetails.revokeOperationType || mappedDetails.operationType || defaultOperationType;
+
+
+                          if (!specificRevokeTemplate && !specificRevokeOperationType) {
+                               logger.warn(`Revoke entitlement (App ID: ${actualAppEntitlementId}) has no revoke template/operation type defined in mapping config and no default for App "${application.name}". Skipping revoke.`, { taskId: taskId, appId: appId, appEntitlementId: actualAppEntitlementId });
+                                applicationProvisioningResults[appId] = applicationProvisioningResults[appId] || { status: 'partial_failure', result: { operations: [] } };
+                                applicationProvisioningResults[appId].result.operations.push({
+                                   appSpecificEntitlementId: actualAppEntitlementId,
+                                   entitlement: item.iglmEntitlementName || 'Unknown Entitlement',
+                                   status: 'skipped',
+                                   message: 'Missing revoke SQL template/operation type in config',
+                                   iglmEntitlementId: item.iglmEntitlementId
+                                });
+                                continue;
+                           }
+
+                            // Construct the object for this specific entitlement revoke for the adapter
+                           finalAppEntitlementsToRevokeForAdapter.push({
+                               iglmEntitlementId: item.iglmEntitlementId, // Might be null
+                               iglmEntitlementName: item.iglmEntitlementName, // Might be null
+                               appSpecificEntitlementId: actualAppEntitlementId, // Required for revoke
+                               applicationId: item.applicationId,
+                               appSpecificUserId: actualAppSpecificUserId, // Required for revoke
+                               mappingDetails: { // Include details relevant to the adapter
+                                    sqlTemplateName: specificRevokeTemplate,
+                                    operationType: specificRevokeOperationType,
+                                    // Add any other relevant mapping details needed by the adapter from mappedDetails
+                                    ...mappedDetails // Include all mapped details
+                               },
+                               // Include any other context from the original revoke payload item needed by the adapter
+                               context: { ...item } // Store the full item as context for adapter
+                           });
+                        } // End loop through entitlementsToRevoke
+                    }
 
 
                     // Pass both grant and revoke lists to the adapter
@@ -630,8 +669,8 @@ async function processProvisioningTask(taskId, options) {
                   // Log the state being sent to the adapter
                   logger.info(`Prepared app-specific desired state for Application "${application.name}"`, {
                       taskId: taskId,
-                      userId: user?.id,
-                        userHrmsId: user?.hrmsId,
+                      userId: user?.id || task?.userId, // Use user ID if loaded, fallback to task ID
+                        userHrmsId: user?.hrmsId || null,
                       userIdInApp: appSpecificDesiredState.userIdInApp,
                       appName: application.name,
                       grantsCount: appSpecificDesiredState.entitlementsToGrant.length,
@@ -640,7 +679,6 @@ async function processProvisioningTask(taskId, options) {
                       // grantAppEntitlementIds: appSpecificDesiredState.entitlementsToGrant.map(e => e.appEntitlementId),
                       // revokeAppEntitlementIds: appSpecificDesiredState.entitlementsToRevoke.map(e => e.appEntitlementId)
                   });
-
 
                   // Call the connector adapter's primary method (applyDesiredState)
                   // Pass the connector config.configuration (connection details etc.) and the prepared app-specific desired state
@@ -669,7 +707,7 @@ async function processProvisioningTask(taskId, options) {
 
              } catch (appProvisioningError) {
                   // Catch errors during config/mapping loading, adapter loading, user ID mapping, or the adapter call itself (if not caught by adapter's try/catch)
-                  logger.error(`Critical error provisioning Application "${application.name}" (ID: ${appId}) for user ${user?.hrmsId}.`, { taskId: taskId, userId: user?.id, appId: appId, error: appProvisioningError.message, stack: appProvisioningError.stack });
+                  logger.error(`Critical error provisioning Application "${application.name}" (ID: ${appId}) for user ${user?.hrmsId || task?.userId || 'N/A'}.`, { taskId: taskId, userId: user?.id, appId: appId, error: appProvisioningError.message, stack: appProvisioningError.stack }); // Log user ID from task if user object is null
                   applicationProvisioningResults[appId] = { status: 'failed', error: { message: appProvisioningError.message, stack: appProvisioningError.stack } };
                   errorsPerApplication[appId] = { message: appProvisioningError.message, stack: appProvisioningError.stack }; // Store error details
                   allApplicationsSucceeded = false; // Mark overall task as failed if any app fails
@@ -686,6 +724,10 @@ async function processProvisioningTask(taskId, options) {
           if (taskToUpdate) {
               // Only update status if it's still in_progress or pending/retrying (prevents overwriting externally set 'cancelled')
               if (taskToUpdate.status === 'in_progress' || taskToUpdate.status === 'pending' || taskToUpdate.status === 'retrying') {
+                  // Ensure errorDetails and results objects exist before spreading
+                  const currentErrorDetails = taskToUpdate.errorDetails || {};
+                  const currentResults = taskToUpdate.results || {};
+
                   await taskToUpdate.update({
                       status: overallTaskStatus, // 'completed' or 'failed'
                       endTime: new Date(),
@@ -699,7 +741,7 @@ async function processProvisioningTask(taskId, options) {
                    // TODO: Log this event (e.g., task was cancelled while processing)
               }
           } else {
-               console.error(`[${serviceName}] processProvisioningTask: CRITICAL ERROR: Task ${taskId} not found in DB when trying to finalize.`);
+               console.error(`CRITICAL ERROR: Task ${taskId} not found in DB when trying to finalize.`);
                // TODO: Implement alerting for this critical failure (task record disappeared).
           }
 
@@ -709,21 +751,21 @@ async function processProvisioningTask(taskId, options) {
          // Publish using the *final* determined status
          const taskCompletedEventPayload = {
              taskId: taskId,
-             userId: user?.id || task?.userId || null, // IGLM User ID (might be null for orphans, get from task if user not loaded)
-             userHrmsId: user?.hrmsId || null, // Include HRMS ID for easier tracking (might be null)
-             applicationId: task?.applicationId || null, // Include Application ID if known
+             userId: taskToUpdate?.userId || null, // IGLM User ID from updated task record (more reliable)
+             // userHrmsId: user?.hrmsId || null, // If user object available earlier, could include HRMS ID
+             applicationId: taskToUpdate?.applicationId || null, // Include Application ID if known
              status: overallTaskStatus, // Use the determined overall status ('completed' or 'failed')
              results: applicationProvisioningResults, // Include detailed results
              errorDetails: errorsPerApplication, // Include detailed errors
              timestamp: new Date(),
-             correlationId: task?.metadata?.correlationId || null // Pass correlation ID from task metadata
+             correlationId: taskToUpdate?.metadata?.correlationId || null // Pass correlation ID from task metadata
          };
          // Publish to a topic like 'provisioning.task.completed' or 'provisioning.task.failed'
           // A single topic with status in the routing key is flexible: provisioning.task.<status>
           const routingKey = `task.${overallTaskStatus}`; // e.g., task.completed, task.failed
-          // MqService.publish is resilient and waits for the channel internally
+         // MqService.publish is resilient and waits for the channel internally
          await mqService.publish('provisioning.task.status', routingKey, taskCompletedEventPayload).catch(mqErr => logger.error(`Failed to publish 'provisioning.task.status' MQ event for task ${taskId}:`, mqErr));
-         logger.info(`Published 'provisioning.task.status' event with routing key '${routingKey}' for task ${taskId}.`, { taskId, routingKey });
+         logger.info(`Published 'provisioning.task.status' event with routing key '${routingKey}' for task ${taskId}.`, { taskId, routingKey: routingKey });
 
 
      } catch (processError) {
@@ -829,6 +871,6 @@ const shutdown = async () => {
 // Export the main worker function and the shutdown method
 module.exports = {
     processProvisioningTask, // Export the main worker function
-    determineAppUserIdentifier, // Export if needed for unit testing or other logic modules
+    determineAppUserIdentifier, // Export if needed for unit testing
     shutdown, // Export the shutdown method for server graceful shutdown
 };
