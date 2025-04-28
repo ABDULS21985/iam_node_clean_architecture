@@ -22,72 +22,150 @@ module.exports = (sequelize, DataTypes) => {
         otherKey: 'roleId' // The foreign key in the UserRole table that points to the Role
       });
 
+      // Associations to other tables that reference Users (e.g., CurrentAppState, ReconciliationResult, ProvisioningTask)
+      User.hasMany(models.CurrentAppState, {
+         foreignKey: 'userId', // Foreign key in CurrentAppStates table
+         as: 'appStates', // Alias
+         onDelete: 'SET NULL' // Policy if a User is deleted (matches migration policy)
+      });
+
+      User.hasMany(models.ReconciliationResult, {
+         foreignKey: 'userId', // Foreign key in ReconciliationResults table
+         as: 'reconciliationResults', // Alias
+         onDelete: 'SET NULL' // Policy if a User is deleted (matches migration policy)
+      });
+
+       User.hasMany(models.ProvisioningTask, {
+          foreignKey: 'userId', // Foreign key in ProvisioningTasks table
+          as: 'provisioningTasks', // Alias
+          onDelete: 'CASCADE' // Or SET NULL depending on desired policy
+       });
+
       // Note: While not strictly necessary for associations, you might also define:
-      // User.hasMany(models.UserRole, { foreignKey: 'userId', as: 'userRoles' });
-      // This is useful if you need to directly query the UserRole entries themselves.
+      // User.hasMany(models.UserRole, { foreignKey: 'userId', as: 'userRoles' }); // Direct association to the join table
     }
   }
   User.init({
     id: {
-      type: DataTypes.UUID,
-      primaryKey: true, // Define as primary key
-      allowNull: false, // Not nullable
-      defaultValue: Sequelize.literal('uuid_generate_v4()') // Set default value (mirrors migration)
+      allowNull: false, // ID cannot be null
+      primaryKey: true, // This is the primary key
+      type: DataTypes.UUID, // Data type is UUID
+      defaultValue: Sequelize.literal('uuid_generate_v4()') // Use PostgreSQL's uuid_generate_v4() function
     },
-    hrmsId: {
+    hrmsId: { // Unique identifier from the HRMS
       type: DataTypes.STRING,
-      allowNull: false, // Should not be nullable (mirrors migration)
-      unique: true // Should be unique (mirrors migration)
+      allowNull: false, // HRMS ID should be required for users created from HRMS (matches migration)
+      unique: true // Ensure uniqueness at the DB level (matches migration)
     },
     firstName: {
       type: DataTypes.STRING,
-      allowNull: true // Assuming first name might be optional initially
+      allowNull: false // Assuming first name is required (matches migration)
+    },
+    middleName: { // Added as it appears in HRMS data
+      type: DataTypes.STRING,
+      allowNull: true // Allow null for middle name (matches migration)
     },
     lastName: {
       type: DataTypes.STRING,
-      allowNull: true // Assuming last name might be optional initially
+      allowNull: false // Last name is required (matches migration)
     },
     email: {
       type: DataTypes.STRING,
-      allowNull: false, // Should not be nullable (mirrors migration)
-      unique: true // Should be unique (mirrors migration)
+      allowNull: true, // Email might not be mandatory for all users (matches migration)
+      unique: true // Email should be unique if present (matches migration)
     },
-    status: {
+    mobileNumber: { // Added as it appears in HRMS data
       type: DataTypes.STRING,
-      allowNull: false, // Status is required
-      defaultValue: 'pending_joiner' // Set a default status
+      allowNull: true // Mobile number might be optional (matches migration)
+    },
+    status: { // Current status in the IGLM system ('pending_joiner', 'active', 'inactive', 'exited')
+      type: DataTypes.STRING,
+      allowNull: false, // Matches model (matches migration)
+      defaultValue: 'pending_joiner' // Default status for new users (matches migration)
     },
     hireDate: {
-      type: DataTypes.DATE,
-      allowNull: false // Hire date is required
+      type: DataTypes.DATE, // Corrected type to DATE
+      allowNull: true // Hire date might not be strictly mandatory depending on HR data (matches migration)
     },
     exitDate: {
-      type: DataTypes.DATE,
-      allowNull: true // Exit date is nullable
+      type: DataTypes.DATE, // Corrected type to DATE
+      allowNull: true // Exit date is null until termination (matches migration)
     },
-    department: {
+    supervisorId: { // Supervisor HRMS ID (matches migration column name)
       type: DataTypes.STRING,
-      allowNull: true // Assuming department might be optional
+      allowNull: true // Supervisor ID might not be mandatory or available for all (matches migration)
     },
-    title: {
+    headOfOfficeId: { // Head of Office HRMS ID (matches migration column name)
       type: DataTypes.STRING,
-      allowNull: true // Assuming title might be optional
+      allowNull: true // Head of Office ID might not be mandatory or available (matches migration)
     },
-    location: {
+    jobTitle: { // Mapping of HRMS job_title field (matches migration column name)
       type: DataTypes.STRING,
-      allowNull: true // Assuming location might be optional
+      allowNull: true // Matches migration
     },
-    metadata: {
+    departmentId: { // Mapping of HRMS department_id field (matches migration column name)
+      type: DataTypes.STRING,
+      allowNull: true // Matches migration
+    },
+    departmentName: { // Mapping of HRMS department_name field (matches migration column name)
+      type: DataTypes.STRING,
+      allowNull: true // Matches migration
+    },
+    divisionId: { // Mapping of HRMS division_id field (matches migration column name)
+      type: DataTypes.STRING,
+      allowNull: true // Matches migration
+    },
+    divisionName: { // Mapping of HRMS division_name field (matches migration column name)
+      type: DataTypes.STRING,
+      allowNull: true // Matches migration
+    },
+    officeId: { // Mapping of HRMS office_id field (matches migration column name)
+      type: DataTypes.STRING,
+      allowNull: true // Matches migration
+    },
+    officeName: { // Mapping of HRMS office_name field (matches migration column name)
+      type: DataTypes.STRING,
+      allowNull: true // Matches migration
+    },
+    gradeId: { // Mapping of HRMS grade_id field (matches migration column name)
+      type: DataTypes.STRING,
+      allowNull: true // Matches migration
+    },
+    grade: { // Mapping of HRMS grade field (grade level) (matches migration column name)
+      type: DataTypes.STRING,
+      allowNull: true // Matches migration
+    },
+    partyId: { // Mapping of HRMS party_id field (matches migration column name)
+      type: DataTypes.STRING,
+      allowNull: true // Matches migration
+    },
+    jobStatus: { // Mapping of HRMS job_status field (raw status) (matches migration column name)
+      type: DataTypes.STRING,
+      allowNull: true // Matches migration
+    },
+    jobLocationId: { // Mapping of HRMS job_location_id field (matches migration column name)
+       type: DataTypes.STRING,
+       allowNull: true // Matches migration
+    },
+    jobLocation: { // Mapping of HRMS job_location field (matches migration column name)
+       type: DataTypes.STRING,
+       allowNull: true // Matches migration
+    },
+    location: { // Mapping of HRMS location field (perhaps simplified) (matches migration column name)
+       type: DataTypes.STRING,
+       allowNull: true // Matches migration
+    },
+    metadata: { // JSONB field for storing additional, less structured attributes from HRMS
       type: DataTypes.JSONB,
-      allowNull: true // Metadata is optional
+      allowNull: true // Matches migration
     }
   }, {
     sequelize,
-    modelName: 'User',
-    tableName: 'Users', // Explicitly define table name (optional but good practice)
-    timestamps: true, // Ensure createdAt and updatedAt are handled
-    underscored: false, // Use snake_case for column names
-    // By default Sequelize pluralizes model name for table name, which is 'Users'
+    modelName: 'User', // Singular model name
+    tableName: 'Users', // Explicitly define table name (plural)
+    timestamps: true, // Handles createdAt and updatedAt (matches migration)
+    underscored: false // Enforce snake_case for column names (matches migration)
+    // Indexes, constraints can also be defined here for models, but migrations are primary source for DB schema
   });
   return User;
 };

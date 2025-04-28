@@ -63,6 +63,35 @@ services:
     networks: [backend]
 
 
+  # idcs-db:
+  #   image: postgres:14
+  #   container_name: iglm-idcs-db
+  #   restart: unless-stopped
+  #   env_file:
+  #     - ../.env
+  #   environment:
+  #     POSTGRES_DB: ${IDCS_DB_NAME}        # from .env (idcs_dev)
+  #     POSTGRES_USER: ${IDCS_DB_USER}      # from .env (idcs_user)
+  #     POSTGRES_PASSWORD: ${IDCS_DB_PASSWORD} # from .env (Secured3211)
+  #     POSTGRES_HOST_AUTH_METHOD: md5      # Explicit authentication
+  #     POSTGRES_INITDB_ARGS: "-A md5"       # Force password auth
+  #   ports:
+  #     - "5438:5432"  # host:container - idcs-db exposed at 5438 locally
+  #   volumes:
+  #     - idcs-db-data:/var/lib/postgresql/data
+  #     - ../scripts/init-extensions.sql:/docker-entrypoint-initdb.d/00_init-extensions.sql:ro
+  #     - ../scripts/init-create-idcs-user.sql:/docker-entrypoint-initdb.d/15_init-create-idcs-user.sql:ro
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U ${IDCS_DB_USER}"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #   networks:
+  #     - backend
+
+
+
+
   # ─────────────────────────────────────────────────────────────────────────────  
   # Joiner Service Database  
   # ─────────────────────────────────────────────────────────────────────────────  
@@ -233,6 +262,7 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
     ports:
       - "${IDCS_PORT}:${IDCS_PORT}"
+    
     depends_on:
       - config-db
       - rabbitmq
@@ -336,6 +366,7 @@ volumes:
   mover-db-data:
   leaver-db-data:
   provisioning-db-data:
+  # idcs-db-data:
 
 networks:
   backend:

@@ -79,28 +79,58 @@ async function performRun(options) {
         console.log(`[${serviceName}] performRun: Loaded User Mapping Config: "${userMappingConfig.name}".`);
 
         // Data Collection
+        // --- Data Collection Phase ---
         try {
-            const connectorModule = require(`./connectors/identity-collection/${hrmsConnectorConfig.type}`);
+            console.log(`[${serviceName}] performRun: Attempting to dynamically load connector adapter module: "${hrmsConnectorConfig.type}"...`);
+            
+            const connectorModulePath = `./connectors/identity-collection/${hrmsConnectorConfig.type}`;
+            const connectorModule = require(connectorModulePath);
+
             if (!connectorModule || typeof connectorModule.collectData !== 'function') {
-                throw new Error(`Connector adapter module "${hrmsConnectorConfig.type}" not found or invalid.`);
+                throw new Error(`Connector adapter module "${hrmsConnectorConfig.type}" is invalid or does not export a collectData function.`);
             }
-            console.log(`[${serviceName}] performRun: Loaded connector adapter module: "${hrmsConnectorConfig.type}".`);
+            console.log(`[${serviceName}] performRun: Successfully loaded connector adapter module: "${hrmsConnectorConfig.type}".`);
 
             const lastSuccessfulRun = await CollectionRun.findOne({
                 where: { status: 'completed', connectorConfigId: hrmsConnectorConfig.id },
                 order: [['endTime', 'DESC']]
             });
-            const lastRunTimestamp = lastSuccessfulRun ? lastSuccessfulRun.endTime : null;
-            console.log(`[${serviceName}] performRun: Calling connector adapter. Last run: ${lastRunTimestamp}`);
 
+            const lastRunTimestamp = lastSuccessfulRun ? lastSuccessfulRun.endTime : null;
+            console.log(`[${serviceName}] performRun: Retrieved last successful run timestamp: ${lastRunTimestamp || 'None (first run).'}`);
+
+            console.log(`[${serviceName}] performRun: Initiating data collection via connector adapter...`);
             rawHrmsData = await connectorModule.collectData(hrmsConnectorConfig.configuration, lastRunTimestamp);
-            runMetrics.processed = rawHrmsData ? rawHrmsData.length : 0;
-            console.log(`[${serviceName}] performRun: Successfully pulled ${runMetrics.processed} records from HRMS.`);
+
+            runMetrics.processed = Array.isArray(rawHrmsData) ? rawHrmsData.length : 0;
+            console.log(`[${serviceName}] performRun: Data collection completed. ${runMetrics.processed} record(s) retrieved.`);
+
+            // --- 🔵 Log first few record KEYS ---
+            if (Array.isArray(rawHrmsData) && rawHrmsData.length > 0) {
+                console.log(`[${serviceName}] performRun: Debugging keys of first few records...`);
+                rawHrmsData.slice(0, 5).forEach((record, index) => {
+                    if (record && typeof record === 'object') {
+                        console.log(`[${serviceName}]   Record ${index + 1} keys:`, Object.keys(record));
+                    } else {
+                        console.warn(`[${serviceName}]   Record ${index + 1} is not an object:`, record);
+                    }
+                });
+                if (rawHrmsData.length > 5) {
+                    console.log(`[${serviceName}]   ...and ${rawHrmsData.length - 5} additional record(s) not shown.`);
+                }
+            } else if (Array.isArray(rawHrmsData)) {
+                console.warn(`[${serviceName}] performRun: rawHrmsData is an empty array.`);
+            } else {
+                console.error(`[${serviceName}] performRun: rawHrmsData is null, undefined, or not an array.`);
+            }
+            // --- End Key Debugging ---
 
         } catch (connectorError) {
-            console.error(`[${serviceName}] performRun: HRMS Connector adapter error:`, connectorError);
-            throw new Error(`HRMS Connector failed: ${connectorError.message}`);
+            console.error(`[${serviceName}] performRun: Fatal error during HRMS connector operation:`, connectorError);
+            throw new Error(`HRMS Connector adapter failure: ${connectorError.message}`);
         }
+// --- End Data Collection Phase ---
+
 
         // Load previous snapshot
         previousSnapshotMap = await temporaryStorage.loadSnapshot(snapshotKey);

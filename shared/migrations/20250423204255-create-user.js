@@ -3,6 +3,8 @@
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
+    await queryInterface.sequelize.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`);
+
     await queryInterface.createTable('Users', {
       id: {
         allowNull: false, // ID cannot be null
@@ -97,6 +99,12 @@ module.exports = {
         type: Sequelize.STRING, // Corrected type
         allowNull: true
       },
+
+      terminationDate: {
+        type: Sequelize.DATE,
+        allowNull: true
+      },
+
       jobStatus: { // Mapping of HRMS job_status field (raw status)
         type: Sequelize.STRING, // Corrected type
         allowNull: true

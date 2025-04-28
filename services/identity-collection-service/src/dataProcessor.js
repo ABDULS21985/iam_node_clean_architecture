@@ -74,7 +74,13 @@ function applyMapping(rawRecord, mappingRules) {
     for (const iglmKey in attrMaps) {
         // Ensure the target IGLM key is a valid attribute name in our User model (basic check)
         // If User model ever changes, this list needs update
-        const userModelAttributes = ['hrmsId', 'firstName', 'lastName', 'email', 'status', 'hireDate', 'exitDate', 'department', 'title', 'location', 'mobileNumber']; // Add 'mobileNumber' if you added it to model
+    const userModelAttributes = [
+        'hrmsId', 'firstName', 'middleName', 'lastName', 'email', 'mobileNumber',
+        'status', 'hireDate', 'exitDate', 'supervisorId', 'headOfOfficeId',
+        'jobTitle', 'departmentId', 'departmentName', 'divisionId', 'divisionName',
+        'officeId', 'officeName', 'gradeId', 'grade', 'partyId', 'jobStatus',
+        'jobLocationId', 'jobLocation', 'location', 'metadata'
+    ];// Add 'mobileNumber' if you added it to model
         if (!userModelAttributes.includes(iglmKey)) {
              console.warn(`[DataProcessor] Mapping Warning: Skipping mapping for unknown IGLM User attribute in applyMapping: ${iglmKey}`);
              continue;
@@ -109,63 +115,140 @@ function applyMapping(rawRecord, mappingRules) {
         }
     }
 
-    // --- Apply Status Mapping (Using the specific status field) ---
-    // Get the raw status value using the configured statusHrmsField
-    const rawStatusValue = (rawRecord !== null && typeof rawRecord === 'object' && rawRecord.hasOwnProperty(statusHrmsField)) ? rawRecord[statusHrmsField] : null;
+        // --- Apply Status Mapping (Using the specific status field) ---
+    const rawStatusValue = (rawRecord !== null && typeof rawRecord === 'object' && rawRecord.hasOwnProperty(statusHrmsField)) 
+    ? rawRecord[statusHrmsField] 
+    : null;
+
+    // Utility function to normalize HRMS status values
+    function normalizeStatus(rawStatus, statusMap) {
+    if (!rawStatus) return 'unknown';
+
+    const cleanedStatus = rawStatus.trim();
+    const lowerCaseStatus = cleanedStatus.toLowerCase();
+    const upperCaseStatus = cleanedStatus.toUpperCase();
+
+    return statusMap[cleanedStatus] || statusMap[lowerCaseStatus] || statusMap[upperCaseStatus] || 'unknown';
+    }
 
     if (rawStatusValue !== null) {
-        // Look up the raw HRMS status value in the statusMapping
-        const mappedStatus = statusMap[rawStatusValue];
-        // Assign mapped status if found, otherwise 'unknown'
-        iglmUser.status = mappedStatus !== undefined ? mappedStatus : 'unknown';
-        if (mappedStatus === undefined) {
-             console.warn(`[DataProcessor] Mapping Warning: HRMS status value "${rawStatusValue}" not found in statusMapping. Setting IGLM status to 'unknown'.`);
-        }
-    } else {
-        // If the HRMS status field is missing or null, default to 'unknown'
-         iglmUser.status = 'unknown';
-         console.warn(`[DataProcessor] Mapping Warning: HRMS status field "${statusHrmsField}" not found or is null in raw record. Setting IGLM status to 'unknown'.`);
-    }
+    const mappedStatus = normalizeStatus(rawStatusValue, statusMap);
+    iglmUser.status = mappedStatus;
 
+    if (mappedStatus === 'unknown') {
+        console.warn(`[DataProcessor] Mapping Warning: HRMS status value "${rawStatusValue}" not found in statusMapping. Setting IGLM status to 'unknown'.`);
+    }
+    } else {
+    iglmUser.status = 'unknown';
+    console.warn(`[DataProcessor] Mapping Warning: HRMS status field "${statusHrmsField}" not found or is null in raw record. Setting IGLM status to 'unknown'.`);
+    }
 
     // --- Apply Metadata Mappings ---
-    iglmUser.metadata = {}; // Re-initialize metadata to ensure it's an object even if empty
+    iglmUser.metadata = {}; // Ensure initialization as object
     for (const metaKey in metaMaps) {
-        const hrmsKey = metaMaps[metaKey];
-        if (rawRecord !== null && typeof rawRecord === 'object' && rawRecord.hasOwnProperty(hrmsKey)) {
-            const rawValue = rawRecord[hrmsKey];
-            // TODO: Add type conversion/validation for metadata fields if needed
-            if (rawValue !== null) {
-                 iglmUser.metadata[metaKey] = rawValue;
-            } else {
-                 // Optionally set to null or omit if raw value is null
-                 iglmUser.metadata[metaKey] = null;
-            }
+    const hrmsKey = metaMaps[metaKey];
+    if (rawRecord !== null && typeof rawRecord === 'object' && rawRecord.hasOwnProperty(hrmsKey)) {
+        const rawValue = rawRecord[hrmsKey];
+        if (rawValue !== null) {
+            iglmUser.metadata[metaKey] = rawValue;
         } else {
-             // Optionally set to null or omit if HRMS field is missing
-             // iglmUser.metadata[metaKey] = null;
-             // console.warn(`[DataProcessor] Mapping Warning: HRMS field "${hrmsKey}" not found in raw record for metadata mapping to "${metaKey}".`);
+            iglmUser.metadata[metaKey] = null; // Optional: could omit nulls if needed
         }
     }
+    }
 
-     // Ensure metadata is a valid JSONB object if some mappings failed or if it remained empty
-     // Ensure it's always an object, even if empty
+    // Validate metadata is object even if no mappings exist
     if (typeof iglmUser.metadata !== 'object' || iglmUser.metadata === null) {
-         iglmUser.metadata = {};
+    iglmUser.metadata = {};
     }
 
+    // === Final Touches & Validation of Unique ID ===
+    // metadata.sourceUniqueIdField is the *logical* key (e.g. "hrmsId")
+    // attrMaps maps that logical key to the real raw column (e.g. "employee_id")
+    const logicalIdKey = sourceUniqueIdField;
+    const rawIdKey     = attrMaps[logicalIdKey] || logicalIdKey;
 
-    // --- Final Touches & Validation ---
-    // Ensure the essential hrmsId field is correctly set based on the configured unique ID field
-    // This is critical for finding users in the DB.
-    if (rawRecord !== null && typeof rawRecord === 'object' && rawRecord.hasOwnProperty(sourceUniqueIdField) && rawRecord[sourceUniqueIdField] !== null) {
-        iglmUser.hrmsId = rawRecord[sourceUniqueIdField];
+    if (
+    rawRecord.hasOwnProperty(rawIdKey) &&
+    rawRecord[rawIdKey] !== null
+    ) {
+    iglmUser.hrmsId = rawRecord[rawIdKey];
     } else {
-        // This is a critical error: cannot map a record without its unique ID.
-        // Return null to indicate mapping failure for this record.
-        console.error(`[DataProcessor] Mapping Error: Raw HRMS record missing required unique ID field "${sourceUniqueIdField}" or its value is null. Cannot map record.`);
-        return null; // Indicate mapping failure for this record
+    console.error(
+        `[DataProcessor] Mapping Error: Missing unique ID column "${rawIdKey}" `
+        + `(logical="${logicalIdKey}") or its value is null.`
+    );
+    return null;
     }
+
+
+    // // --- Final Touches & Validation ---
+    // // Validate presence of essential unique ID field
+    // if (rawRecord !== null && typeof rawRecord === 'object' && rawRecord.hasOwnProperty(sourceUniqueIdField) && rawRecord[sourceUniqueIdField] !== null) {
+    // iglmUser.hrmsId = rawRecord[sourceUniqueIdField];
+    // } else {
+    // console.error(`[DataProcessor] Mapping Error: Raw HRMS record missing required unique ID field "${sourceUniqueIdField}" or its value is null. Cannot map record.`);
+    // return null; // Critical failure: cannot continue mapping
+    // }
+
+
+    // // --- Apply Status Mapping (Using the specific status field) ---
+    // // Get the raw status value using the configured statusHrmsField
+    // const rawStatusValue = (rawRecord !== null && typeof rawRecord === 'object' && rawRecord.hasOwnProperty(statusHrmsField)) ? rawRecord[statusHrmsField] : null;
+
+    // if (rawStatusValue !== null) {
+    //     // Look up the raw HRMS status value in the statusMapping
+    //     const mappedStatus = statusMap[rawStatusValue];
+    //     // Assign mapped status if found, otherwise 'unknown'
+    //     iglmUser.status = mappedStatus !== undefined ? mappedStatus : 'unknown';
+    //     if (mappedStatus === undefined) {
+    //          console.warn(`[DataProcessor] Mapping Warning: HRMS status value "${rawStatusValue}" not found in statusMapping. Setting IGLM status to 'unknown'.`);
+    //     }
+    // } else {
+    //     // If the HRMS status field is missing or null, default to 'unknown'
+    //      iglmUser.status = 'unknown';
+    //      console.warn(`[DataProcessor] Mapping Warning: HRMS status field "${statusHrmsField}" not found or is null in raw record. Setting IGLM status to 'unknown'.`);
+    // }
+
+
+    // // --- Apply Metadata Mappings ---
+    // iglmUser.metadata = {}; // Re-initialize metadata to ensure it's an object even if empty
+    // for (const metaKey in metaMaps) {
+    //     const hrmsKey = metaMaps[metaKey];
+    //     if (rawRecord !== null && typeof rawRecord === 'object' && rawRecord.hasOwnProperty(hrmsKey)) {
+    //         const rawValue = rawRecord[hrmsKey];
+    //         // TODO: Add type conversion/validation for metadata fields if needed
+    //         if (rawValue !== null) {
+    //              iglmUser.metadata[metaKey] = rawValue;
+    //         } else {
+    //              // Optionally set to null or omit if raw value is null
+    //              iglmUser.metadata[metaKey] = null;
+    //         }
+    //     } else {
+    //          // Optionally set to null or omit if HRMS field is missing
+    //          // iglmUser.metadata[metaKey] = null;
+    //          // console.warn(`[DataProcessor] Mapping Warning: HRMS field "${hrmsKey}" not found in raw record for metadata mapping to "${metaKey}".`);
+    //     }
+    // }
+
+    //  // Ensure metadata is a valid JSONB object if some mappings failed or if it remained empty
+    //  // Ensure it's always an object, even if empty
+    // if (typeof iglmUser.metadata !== 'object' || iglmUser.metadata === null) {
+    //      iglmUser.metadata = {};
+    // }
+
+
+    // // --- Final Touches & Validation ---
+    // // Ensure the essential hrmsId field is correctly set based on the configured unique ID field
+    // // This is critical for finding users in the DB.
+    // if (rawRecord !== null && typeof rawRecord === 'object' && rawRecord.hasOwnProperty(sourceUniqueIdField) && rawRecord[sourceUniqueIdField] !== null) {
+    //     iglmUser.hrmsId = rawRecord[sourceUniqueIdField];
+    // } else {
+    //     // This is a critical error: cannot map a record without its unique ID.
+    //     // Return null to indicate mapping failure for this record.
+    //     console.error(`[DataProcessor] Mapping Error: Raw HRMS record missing required unique ID field "${sourceUniqueIdField}" or its value is null. Cannot map record.`);
+    //     return null; // Indicate mapping failure for this record
+    // }
 
     // TODO: Add validation against IGLM User model schema if strict validation is needed
     // const { User } = models; // You would need to get models if doing schema validation here
