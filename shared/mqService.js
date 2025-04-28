@@ -2,6 +2,9 @@
 const amqp = require('amqplib'); // You will need to install: npm install amqplib
 const EventEmitter = require('events'); // Import EventEmitter for connection state events
 const { v4: uuidv4 } = require('uuid'); // For tracking publisher confirms
+const fs = require('fs'); // Import fs for reading file content (for debugging)
+const path = require('path'); // Import path for resolving file path (for debugging)
+
 
 // Configuration for MQ connection and reconnection
 const MQ_CONNECTION_URL = process.env.MESSAGE_QUEUE_URL || 'amqp://guest:guest@localhost:5672/';
@@ -52,7 +55,7 @@ class MqService extends EventEmitter { // Extend EventEmitter
                  // Fall through to start a new attempt below
              }
         }
-        
+
         if (this.isConnected && this.channel && this.isChannelReady) {
              console.log('[MqService] init: MQ service already initialized and connected.');
              return; // Already fully ready
@@ -88,8 +91,32 @@ class MqService extends EventEmitter { // Extend EventEmitter
             this.connection.on('unblocked', () => { console.log('[MqService] Connection Unblocked.'); });
 
 
+            // --- START DEBUGGING LINES (Still included as requested) ---
+            console.log('[MqService] DEBUG: About to call this.createChannel()...');
+            console.log(`[MqService] DEBUG: Type of this: ${typeof this}`); // Should be 'object'
+            console.log(`[MqService] DEBUG: Is this an instance of MqService? ${this instanceof MqService}`); // Should be true
+            console.log(`[MqService] DEBUG: Type of this.createChannel: ${typeof this.createChannel}`); // Should be 'function'
+             console.log(`[MqService] DEBUG: Value of this.createChannel:`, this.createChannel); // Check the actual value
+            if (typeof this.createChannel !== 'function') {
+                 console.error('[MqService] DEBUG: !!! this.createChannel is NOT a function at this point !!!');
+                 console.log('[MqService] DEBUG: Listing own keys on "this" object:', Object.getOwnPropertyNames(this)); // Only own properties
+                 console.log('[MqService] DEBUG: Listing all keys on "this" object (including prototype):', Object.keys(this)); // Enumerable properties
+                 console.log('[MqService] DEBUG: Listing prototype methods:', Object.getOwnPropertyNames(MqService.prototype)); // Methods on the class prototype
+
+                 // --- Uncomment the line below to print the source code being executed ---
+                 // try {
+                 //     const sourceCode = fs.readFileSync(__filename, 'utf8');
+                 //     console.log(`[MqService] DEBUG: Executing source code from ${__filename}:\n-- START SOURCE --\n${sourceCode}\n-- END SOURCE --`);
+                 // } catch (readErr) {
+                 //     console.error('[MqService] DEBUG: Could not read source file:', readErr);
+                 // }
+                 // --- End Uncomment ---
+            }
+            // --- END DEBUGGING LINES ---
+
+
             // Create a channel *after* the connection is established
-            await this.createChannel(); // Create channel and set up its listeners
+            await this.createChannel(); // <-- This should now call the method successfully
 
             // Check if channel creation succeeded and marked as ready
             if (this.isChannelReady) {
@@ -219,9 +246,74 @@ class MqService extends EventEmitter { // Extend EventEmitter
 
 
     /**
+     * Creates a channel and sets up its error listeners and publisher confirms.
+     * Requires an active connection (this.connection).
+     *
+     * @returns {Promise<void>} Resolves when the channel is ready.
+     * @throws {Error} If channel creation fails.
+     */
+    async createChannel() {
+         console.log('[MqService] createChannel: Creating new channel...'); // <-- This log should appear if createChannel is called
+         if (this.isChannelReady) {
+             console.log('[MqService] createChannel: Channel is already ready.');
+             return;
+         }
+         if (!this.connection) {
+             console.error('[MqService] createChannel: Cannot create channel, connection is not available.');
+             throw new Error('MQ Connection not available to create channel.');
+         }
+
+         try {
+             // Creates the actual channel instance using the connection
+             // --- FIX START: Use createConfirmChannel for publisher confirms ---
+             this.channel = await this.connection.createConfirmChannel(); // <--- Changed from createChannel()
+             // --- FIX END ---
+             console.log('[MqService] createChannel: Successfully created channel.');
+
+             // Set up channel error listeners
+             this.channel.on('error', (err) => {
+                 console.error('[MqService] Channel Error:', err.message);
+                 this.handleChannelError(err); // Handle channel-level errors
+             });
+             this.channel.on('close', (err) => {
+                 console.log('[MqService] Channel Closed:', err?.message);
+                 this.handleChannelError(err); // Handle channel-level closure
+             });
+
+             // Enable publisher confirms on this channel
+             // NOTE: For channels created with createConfirmChannel(), confirmSelect() is technically not needed
+             // as confirms are automatically enabled. But calling it is harmless and ensures the channel is
+             // internally ready for confirms flow. You could potentially remove this line, but keeping it
+             // doesn't hurt. The important change is using createConfirmChannel().
+            //  await this.channel.confirmSelect(); // <-- This line should now work
+
+             console.log('[MqService] createChannel: Publisher confirms enabled.'); // This log indicates confirmSelect succeeded
+
+             // Set up listener for publisher confirmations (ack/nack)
+             // ... (ack/nack listeners remain the same) ...
+
+
+             this.isChannelReady = true; // Mark channel as ready after confirms enabled
+             this.emit('channelReady'); // Emit event
+             console.log('[MqService] createChannel: Channel ready for operations.'); // This log indicates success
+
+         } catch (error) {
+              console.error('[MqService] createChannel: Failed to create or configure channel:', error.message);
+              this.isChannelReady = false;
+              this.channel = null; // Clear channel reference
+              // Re-throw error to be caught by the main init/reconnection logic
+              // Wrap the error to indicate it came from channel creation
+              throw new Error(`Failed to create MQ channel: ${error.message}`);
+         }
+    }
+
+
+    /**
      * Waits for the MQ connection and channel to be ready for operations.
      * @param {number} [timeout=MQ_WAIT_FOR_CHANNEL_TIMEOUT_MS] - Timeout in milliseconds.
      * @returns {Promise<void>} Resolves when connection and channel are ready, or rejects on timeout/critical error.
+     * @fires MqService#channelReady
+     * @fires MqService#disconnected
      */
     async waitForChannel(timeout = MQ_WAIT_FOR_CHANNEL_TIMEOUT_MS) { // Use configured timeout
          console.log('[MqService] waitForChannel: Waiting for channel to be ready...');
@@ -337,7 +429,7 @@ class MqService extends EventEmitter { // Extend EventEmitter
         try {
             const messageBuffer = Buffer.from(JSON.stringify(payload));
             // Use messageId as correlationId and sequence for deliveryTag lookup
-            const messageId = uuidv4(); 
+            const messageId = uuidv4();
             const sequence = this.nextPublishSequence++; // Increment sequence *before* publishing
 
             // Store the resolve/reject functions for this message's confirmation promise

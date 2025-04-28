@@ -388,37 +388,109 @@ const connectorDefs = [
 /** 2) Define all Mapping configs (including “service” configs + attribute→role + provisioning & discovery mappings) **/
 const mappingDefs = [
   // HRMS→User mapping
-  {
-    name: "Postgres HRMS to IGLM User Mapping",
-    sourceType: "IdentitySource",
-    targetType: "User",
-    sourceId: null,
-    mappingRules: {
-      attributeMappings: {
-        firstName: "first_name", lastName: "last_name", email: "email",
-        hrmsId: "employee_id", status: "job_status", hireDate: "date_of_hire",
-        exitDate: "termination_date", department: "department_name", title: "job_title",
-        location: "job_location", mobileNumber: "mobile_number"
-      },
-      statusMapping: {
-        Active: "active", "On Leave": "active",
-        Terminated: "exited", "Pending Hire": "pending_joiner", Inactive: "inactive"
-      },
-      metadataMapping: {
-        personId: "person_id", middleName: "middle_name",
-        supervisorHrmsId: "supervisor_id", headOfOfficeHrmsId: "head_of_office_id",
-        jobLocationId: "job_location_id", departmentId: "department_id",
-        divisionId: "division_id", divisionName: "division_name",
-        officeId: "office_id", officeName: "office_name",
-        gradeId: "grade_id", gradeLevel: "grade", partyId: "party_id"
-      },
-      metadata: {
-        sourceUniqueIdField: "employee_id",
-        statusSourceField: "job_status"
-      }
+
+  // HRMS→User mapping
+{
+  name: "Postgres HRMS to IGLM User Mapping",
+  sourceType: "IdentitySource",
+  targetType: "User",
+  sourceId: null,
+  mappingRules: {
+    attributeMappings: {
+      firstName: "first_name",
+      lastName: "last_name",
+      email: "email",
+      hrmsId: "employee_id",
+      status: "job_status", // Maps HRMS status string for lookup in statusMapping
+      jobStatus: "job_status", // <-- ADDED: Maps raw HRMS status string to the jobStatus column
+      hireDate: "date_of_hire",
+      exitDate: "termination_date",
+
+      // Corrected mappings for fields that map to specific User model columns
+      departmentName: "department_name", // <-- CORRECTED: Was "department"
+      departmentId: "department_id", // <-- ADDED: Maps to direct departmentId column
+      supervisorId: "supervisor_id", // <-- ADDED: Maps to direct supervisorId column
+      headOfOfficeId: "head_of_office_id", // <-- ADDED: Maps to direct headOfOfficeId column
+      jobTitle: "job_title", // <-- CORRECTED: Was "title"
+      jobLocation: "job_location", // <-- ADDED/KEPT: Maps to direct jobLocation column
+      jobLocationId: "job_location_id", // <-- ADDED: Maps to direct jobLocationId column
+      location: "job_location", // <-- Maps to direct location column (keeping for now, but source 'location' not in query)
+
+      mobileNumber: "mobile_number", // <-- ADDED: Maps to direct mobileNumber column
+
+      // Added mappings for other direct User model columns present in HRMS data
+      divisionId: "division_id", // <-- ADDED
+      divisionName: "division_name", // <-- ADDED
+      officeId: "office_id", // <-- ADDED
+      officeName: "office_name", // <-- ADDED
+      gradeId: "grade_id", // <-- ADDED
+      grade: "grade", // <-- ADDED: Maps to direct grade column (vs gradeLevel in metadata)
+      partyId: "party_id" // <-- ADDED
+
     },
-    metadata: {}
+    statusMapping: { // Map HRMS status values to IGLM status values
+      Active: "active",
+      "Active Assignment": "active", // From previous logs
+      "On Leave": "active",
+      "Maternity Leave Without Pay": "on_leave", // From previous logs
+      "Suspend Employee from Payroll": "inactive", // From previous logs
+      Terminated: "exited",
+      "Pending Hire": "pending_joiner",
+      Inactive: "inactive" // From previous logs
+    },
+    metadataMapping: { // Map HRMS fields to nested keys in the IGLM User metadata JSONB (as before)
+      personId: "person_id",
+      middleName: "middle_name",
+      supervisorHrmsId: "supervisor_id",
+      headOfOfficeHrmsId: "head_of_office_id",
+      jobLocationId: "job_location_id", // Duplicate of direct column mapping, kept for metadata
+      departmentId: "department_id", // Duplicate of direct column mapping, kept for metadata
+      divisionId: "division_id", // Duplicate of direct column mapping, kept for metadata
+      divisionName: "division_name", // Duplicate of direct column mapping, kept for metadata
+      officeId: "office_id", // Duplicate of direct column mapping, kept for metadata
+      officeName: "office_name", // Duplicate of direct column mapping, kept for metadata
+      gradeId: "grade_id", // Duplicate of direct column mapping, kept for metadata
+      gradeLevel: "grade", // <-- Renamed from 'grade' in your sample, mapping to 'grade' source, kept for metadata
+      partyId: "party_id" // Duplicate of direct column mapping, kept for metadata
+    },
+    metadata: { // General metadata about the mapping rules themselves
+      sourceUniqueIdField: "employee_id", // Key name in raw HRMS data for unique ID
+      statusSourceField: "job_status" // Key name in raw HRMS data for status (used by DataProcessor for statusMapping lookup)
+    }
   },
+  metadata: {} // Top-level metadata for the MappingConfig entry
+},
+  // {
+  //   name: "Postgres HRMS to IGLM User Mapping",
+  //   sourceType: "IdentitySource",
+  //   targetType: "User",
+  //   sourceId: null,
+  //   mappingRules: {
+  //     attributeMappings: {
+  //       firstName: "first_name", lastName: "last_name", email: "email",
+  //       hrmsId: "employee_id", status: "job_status", hireDate: "date_of_hire",
+  //       exitDate: "termination_date", department: "department_name", title: "job_title",
+  //       location: "job_location", mobileNumber: "mobile_number"
+  //     },
+  //     statusMapping: {
+  //       Active: "active", "On Leave": "active",
+  //       Terminated: "exited", "Pending Hire": "pending_joiner", Inactive: "inactive"
+  //     },
+  //     metadataMapping: {
+  //       personId: "person_id", middleName: "middle_name",
+  //       supervisorHrmsId: "supervisor_id", headOfOfficeHrmsId: "head_of_office_id",
+  //       jobLocationId: "job_location_id", departmentId: "department_id",
+  //       divisionId: "division_id", divisionName: "division_name",
+  //       officeId: "office_id", officeName: "office_name",
+  //       gradeId: "grade_id", gradeLevel: "grade", partyId: "party_id"
+  //     },
+  //     metadata: {
+  //       sourceUniqueIdField: "employee_id",
+  //       statusSourceField: "job_status"
+  //     }
+  //   },
+  //   metadata: {}
+  // },
 
   // Service-level configurations (ICS, Joiner, Mover, Leaver, Discovery)
   {
