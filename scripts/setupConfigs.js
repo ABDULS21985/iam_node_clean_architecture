@@ -22,12 +22,13 @@ async function runSetup() {
         // --- Define Configuration Data ---
 
         // Data for the HRMS Connector Config (Existing)
+// Data for the HRMS Connector Config (Existing)
         const hrmsConnectorData = {
             name: "Postgres HRMS Identity Source",
             serviceType: "IdentityCollection",
             type: "hrms-db-postgres",
-            configuration: {       // <<<<<<<<<<< ADD THIS
-                mappingRules: {     // Move mappingRules under configuration
+            configuration: {
+                mappingRules: {
                     dbType: "postgres",
                     connection: {
                         host: process.env.HRMS_DB_HOST,
@@ -36,15 +37,18 @@ async function runSetup() {
                         user: process.env.HRMS_DB_USER,
                         password: process.env.HRMS_DB_PASSWORD
                     },
-                    query: "SELECT DISTINCT … FROM apps.xxcbn_iam_employees_v WHERE …",
+                    // === UPDATED QUERY HERE ===
+                    query: "SELECT DISTINCT person_id, employee_id, first_name, middle_name, last_name, date_of_hire, job_title, supervisor_id, head_of_office_id, job_location_id, job_location, mobile_number, department_id, department_name, division_id, division_name, office_id, office_name, grade_id, grade, party_id, termination_date, job_status FROM apps.xxcbn_iam_employees_v WHERE (termination_date IS NULL OR termination_date = CURRENT_DATE OR termination_date > CURRENT_DATE) AND department_id <> '1129' LIMIT 4000;",
+                    // ==========================
                     uniqueIdentifierAttribute: "employee_id"
                 },
                 metadata: {
                     description: "Collect Employee Identities from Postgres View"
                 }
             },
+            // This top-level metadata is also fine for the ConnectorConfig entry
             metadata: {
-                description: "Collect Employee Identities from Postgres View" // ← still OK at top-level for Connector metadata
+                description: "Collect Employee Identities from Postgres View"
             }
         };
         
@@ -57,55 +61,65 @@ async function runSetup() {
             sourceId: null, // Can be linked to connector ID later if needed, but name is sufficient for lookup now
             targetType: "User", // Mapping is to the IGLM User model
             mappingRules: {
-             attributeMappings: {
-                "firstName": "first_name",
-                "lastName": "last_name",
-                "email": "email", 
-                "hrmsId": "employee_id",
-                "status": "job_status", 
-                "hireDate": "date_of_hire",
-                "exitDate": "termination_date",
-                "departmentName": "department_name",
-                "departmentId": "department_id",
-                "supervisorId": "supervisor_id",
-                "jobTitle": "job_title", 
-                "jobLocation": "job_location",
-                "location": "job_location",   
-                "mobileNumber": "mobile_number"
-             },
-             statusMapping: { // Map HRMS status values to IGLM status values
-                "Active": "active",
-                "Active Assignment": "active",  // Added from logs
-                "On Leave": "active",
-                "Maternity Leave Without Pay": "on_leave",  // Added from logs
-                "Suspend Employee from Payroll": "inactive",  // Added from logs
-                "Terminated": "exited",
-                "Pending Hire": "pending_joiner",
-                "Inactive": "inactive"
-             },
-             metadataMapping: { // Map HRMS fields into the IGLM User metadata JSONB
-                "personId": "person_id",
-                "middleName": "middle_name",
-                "supervisorHrmsId": "supervisor_id",
-                "headOfOfficeHrmsId": "head_of_office_id",
-                "jobLocationId": "job_location_id",
-                "departmentId": "department_id",
-                "divisionId": "division_id",
-                "divisionName": "division_name",
-                "officeId": "office_id",
-                "officeName": "office_name",
-                "gradeId": "grade_id",
-                "gradeLevel": "grade",
-                "partyId": "party_id"
-             },
-             metadata: { // Metadata about the mapping rules
-                 "sourceUniqueIdField": "employee_id", // <-- Crucial for DeltaDetection and DataProcessor
-                 "statusSourceField": "job_status" // <-- Crucial for DataProcessor applyMapping status logic
-             }
-                // TODO: Add rules for identifying mover attributes if needed for sophisticated comparison/events
-                // "moverAttributes": ["job_title", "department_name", "job_location", "email"]
-             },
-             metadata: {}
+                attributeMappings: {
+                    "firstName": "first_name",
+                    "lastName": "last_name",
+                    "email": "email",
+                    "hrmsId": "employee_id",
+                    "status": "job_status", // Maps HRMS status string for lookup in statusMapping
+                    "jobStatus": "job_status", // Maps raw HRMS status string to the jobStatus column
+                    "hireDate": "date_of_hire",
+                    "exitDate": "termination_date",
+                    "departmentName": "department_name",
+                    "departmentId": "department_id",
+                    "supervisorId": "supervisor_id", // Maps source supervisor_id to direct supervisorId column
+                    "headOfOfficeId": "head_of_office_id", // <<-- ADDED: Maps source head_of_office_id to direct headOfOfficeId column
+                    "jobTitle": "job_title",
+                    "jobLocation": "job_location",
+                    // "location": "job_location", // <-- REMOVED: Source 'location' not in query
+                    "mobileNumber": "mobile_number",
+                    "jobLocationId": "job_location_id", // Added direct mapping for jobLocationId
+                    "divisionId": "division_id", // Added direct mapping for divisionId
+                    "divisionName": "division_name", // Added direct mapping for divisionName
+                    "officeId": "office_id", // Added direct mapping for officeId
+                    "officeName": "office_name", // Added direct mapping for officeName
+                    "gradeId": "grade_id", // Added direct mapping for gradeId
+                    "grade": "grade", // <<-- ADDED: Maps source grade to direct grade column
+                    "partyId": "party_id" // Added direct mapping for partyId
+                },
+                statusMapping: { // Map HRMS status values (from job_status) to IGLM status values ('pending_joiner', 'active', etc.)
+                    "Active": "active",
+                    "Active Assignment": "active",
+                    "On Leave": "active",
+                    "Maternity Leave Without Pay": "on_leave",
+                    "Suspend Employee from Payroll": "inactive",
+                    "Terminated": "exited",
+                    "Pending Hire": "pending_joiner",
+                    "Inactive": "inactive"
+                },
+                metadataMapping: { // Map HRMS fields into the IGLM User metadata JSONB (using these keys)
+                    "personId": "person_id",
+                    "middleName": "middle_name",
+                    "supervisorHrmsId": "supervisor_id", // Maps source supervisor_id to metadata key supervisorHrmsId
+                    "headOfOfficeHrmsId": "head_of_office_id", // Maps source head_of_office_id to metadata key headOfOfficeHrmsId
+                    "jobLocationId": "job_location_id",
+                    "departmentId": "department_id",
+                    "divisionId": "division_id",
+                    "divisionName": "division_name",
+                    "officeId": "office_id",
+                    "officeName": "office_name",
+                    "gradeId": "grade_id",
+                    "gradeLevel": "grade", // Maps source grade to metadata key gradeLevel
+                    "partyId": "party_id"
+                },
+                metadata: { // Metadata about the mapping rules themselves
+                    "sourceUniqueIdField": "employee_id", // <-- Crucial for DeltaDetection and DataProcessor
+                    "statusSourceField": "job_status" // <-- Crucial for DataProcessor applyMapping status logic
+                    // TODO: Add rules for identifying mover attributes if needed for sophisticated comparison/events
+                    // "moverAttributes": ["job_title", "department_name", "job_location", "email"]
+                }
+            },
+            metadata: {} // Top-level metadata for the MappingConfig entry itself
         };
 
 

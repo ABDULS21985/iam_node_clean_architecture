@@ -1,10 +1,13 @@
 // // services/identity-collection-service/src/server.js
+require('dotenv').config({ path: '../../../.env' }); // Adjust path if .env is elsewhere
 
 // --- Node.js Core & Express Setup ---
 const express = require('express');
 const app = express();
 const port = process.env.IDCS_PORT || 4001; // Use the port defined in .env, default to 4001
 let server = null; // Keep track of the HTTP server instance
+
+
 
 // --- Third-Party Libraries ---
 const cron = require('node-cron'); // For scheduling tasks
