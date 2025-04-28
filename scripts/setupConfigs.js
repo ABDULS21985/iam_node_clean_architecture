@@ -126,32 +126,77 @@ async function runSetup() {
 // ────────────────────────────────────────────────────────────────────────────────
 // NEW ▸ Baseline mapping of user attributes to RBAC roles
 // // ────────────────────────────────────────────────────────────────────────────────
+// const defaultAttrRoleMappingData = {
+//         name: "Default Attribute To Role Mapping",
+//         sourceType: "UserAttribute",      // the matrix setup script looks for this
+//         sourceId: null,
+//         targetType: "Role",
+//         mappingRules: {
+//             /*
+//              * attributeRoleRules ⇒ evaluated in order;
+//              * the first rule that matches {attribute,value} wins.
+//              */
+//             attributeRoleRules: [
+//                 { attribute: "department_name", value: "Finance",   role: "finance_user"   },
+//                 { attribute: "department_name", value: "IT",        role: "it_user"        },
+//                 { attribute: "job_title",       value: "Manager",   role: "people_manager" }
+//             ],
+//             /*
+//              * fallback role when no explicit rule matches
+//              */
+//             defaultRole: "basic_user"
+//         },
+//         metadata: {
+//             description: "Baseline attribute-driven RBAC mapping consumed by Joiner / \
+//     Mover / Leaver orchestration layers."
+//         }
+//     };
+
 const defaultAttrRoleMappingData = {
-        name: "Default Attribute To Role Mapping",
-        sourceType: "UserAttribute",      // the matrix setup script looks for this
-        sourceId: null,
-        targetType: "Role",
-        mappingRules: {
-            /*
-             * attributeRoleRules ⇒ evaluated in order;
-             * the first rule that matches {attribute,value} wins.
-             */
-            attributeRoleRules: [
-                { attribute: "department_name", value: "Finance",   role: "finance_user"   },
-                { attribute: "department_name", value: "IT",        role: "it_user"        },
-                { attribute: "job_title",       value: "Manager",   role: "people_manager" }
-            ],
-            /*
-             * fallback role when no explicit rule matches
-             */
-            defaultRole: "basic_user"
-        },
-        metadata: {
-            description: "Baseline attribute-driven RBAC mapping consumed by Joiner / \
-    Mover / Leaver orchestration layers."
+        name: "Default Attribute To Role Mapping",
+        sourceType: "UserAttribute",
+        sourceId: null,
+        targetType: "Role",
+        mappingRules: {
+            attributeToRoleMapping: { // <--- Rules nested here
+                conditionEngine: "simple", // <--- Specify the engine (can be 'json-logic' for more complex rules)
+                rules: [ // <--- Rules array name is 'rules'
+                    //  rules based on the matrix structure:
+                     // This rule corresponds to the first row in the matrix that assigns role 61
+                    {
+                        ruleName: "CBN - GL Admin Budget & Funds Inquiry Rule 1",
+                        condition: { // <--- Simple object condition for static attributes
+                             "jobLocationId": "106", // Use string if IDs are strings in your data/model
+                             "departmentId": "119",
+                             "divisionId": "119",
+                             "officeId": "119"
+                         },
+                         eligibleGrades: ["01", "62", "106", "64"], // <--- Eligible grades property
+                        roles: ["61"] // <--- Array of role names (using the number for now, assuming they map to role names)
+                    },
+                     //  rule for the second row assigning roles 63, 64, 65
+                    {
+                        ruleName: "CBN - HQ GL Reports (Generic) Rule 1",
+                        condition: {
+                             "jobLocationId": "106",
+                             "departmentId": "127",
+                             "divisionId": "48",
+                             "officeId": "127"
+                         },
+                         // Assuming this rule applies to all grades if eligibleGrades is missing
+                        roles: ["63", "64", "65"]
+                    },
+                     // ... Add more rules based on your matrix ...
+                ]
+            },
+            defaultRole: "basic_user", // <--- Default role remains here
+             // Other mappingRules properties can exist here alongside attributeToRoleMapping and defaultRole
+             // e.g., "metadata": { ... }
+        },
+        metadata: {
+            description: "Baseline attribute-driven RBAC mapping"
         }
     };
-    
 
         // Data for the ICS Service Configuration (Existing)
         const icsServiceConfigData = {
