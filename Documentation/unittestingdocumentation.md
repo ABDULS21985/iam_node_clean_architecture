@@ -18,7 +18,7 @@ This document provides a step-by-step guide for manually testing the core backen
 * Source code is cloned and dependencies (`npm install`) are installed in the project root.
 * A `.env` file is created at the project root with all necessary environment variables configured (DB, MQ, Redis URLs, ports, service API URLs).
 * You have access to monitor the logs of each service (`node src/server.js` output).
-* (Optional but Recommended) Access to RabbitMQ Management UI (typically http://localhost:15672) for monitoring queues and exchanges.
+* (Optional but Recommended) Access to RabbitMQ Management UI (typically <http://localhost:15672>) for monitoring queues and exchanges.
 * (Optional but Recommended) Access to your PostgreSQL database (Config/Core DB) to check table contents (`Users`, `ProvisioningTasks`, `CurrentAppStates`, `ReconciliationResults`, etc.).
 * Your HRMS database/mock is running and populated with test user data.
 * Your target application systems/mocks are running and configured (required for Phase 3 onwards).
@@ -32,26 +32,32 @@ This document provides a step-by-step guide for manually testing the core backen
 1. **Start Infrastructure:**
     * Navigate to your infrastructure directory (e.g., `cd deploy/infrastructure`).
     * Run Docker Compose:
+
         ```bash
         docker-compose up -d
         ```
+
     * **Verification:** Ensure all containers start successfully. Check Docker logs if any fail. Verify you can access RabbitMQ Management UI and connect to your PostgreSQL database.
 
 2. **Run Database Migrations:**
     * Navigate to the project root (e.g., `cd ../..`).
     * Run migrations to create all necessary tables:
+
         ```bash
         npx sequelize-cli db:migrate --url postgres://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME
         ```
+
         (Replace `$DB_USER`, etc., or ensure env vars are loaded in your shell).
     * **Verification:** Check database logs or connect to the DB to confirm all tables from your `shared/models` definitions and migrations exist.
 
 3. **Populate Configuration Database:**
     * Navigate to the project root.
     * Run the setup script containing definitions for service configs, connector configs, and mapping configs (including the Attribute-to-Role mapping).
+
         ```bash
         node scripts/setupConfigs.js
         ```
+
     * **Verification:** Monitor script logs for successful database connection and logs indicating which configurations were created or found. Connect to the Config DB to check `ConnectorConfigs` and `MappingConfigs` tables contain the expected entries with correct `mappingRules` JSONB data.
 
 **Status:** Proceed to Phase 1 once Phase 0 is fully verified.
@@ -68,23 +74,29 @@ This document provides a step-by-step guide for manually testing the core backen
     * Ensure your Redis container is running.
     * Connect to Redis (e.g., using `redis-cli`).
     * Execute `FLUSHALL` or `DEL hrms_snapshot:<ConnectorConfig ID>` (if you know the specific key from a previous run). `FLUSHALL` is simplest if Redis is only used for this.
+
     * ```bash
         # Example using redis-cli
         redis-cli
         FLUSHALL
         exit
         ```
+
     * **Verification:** Connect to Redis and verify no keys exist or the specific snapshot key is gone.
 
 2. **Start Identity Collection Service (ICS):**
     * Navigate to the ICS service directory:
+
         ```bash
         cd services/identity-collection-service
         ```
+
     * Start the service:
+
         ```bash
         node src/server.js
         ```
+
     * **Verification:**
         * Monitor ICS logs (`src/server.js` output) for successful startup, Config DB connection, MQ connection, Redis connection, and the scheduler starting.
         * Look for "Cron schedule triggered." and "Starting scheduled data collection task.".
@@ -124,12 +136,14 @@ This document provides a step-by-step guide for manually testing the core backen
 3. **Clean IGLM Core DB Users & Provisioning Tasks (for fresh flow test):**
     * Connect to your IGLM Core DB.
     * Empty the `Users` and `ProvisioningTasks` tables to simulate a clean state for new users.
+
     * ```sql
         -- Example SQL
         DELETE FROM "ProvisioningTasks";
         DELETE FROM "UserRoles"; -- Need to clear join table first
         DELETE FROM "Users";
         ```
+
     * Clean the Redis snapshot for ICS as in Phase 1 Step 1.
     * Ensure HRMS DB has the initial user data.
 

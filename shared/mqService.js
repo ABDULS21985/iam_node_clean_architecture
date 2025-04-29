@@ -408,12 +408,20 @@ class MqService extends EventEmitter { // Extend EventEmitter
         // The check !this.isChannelReady || !this.channel?.send should theoretically be true here
         // if waitForChannel resolved without error.
          // However, add a defensive check just in case state changes immediately after waitForChannel resolves.
-         if (!this.isChannelReady || !this.channel?.send) {
-              const state = `isChannelReady: ${this.isChannelReady}, channel: ${!!this.channel}, channel.send: ${!!this.channel?.send}`;
-              console.error(`[MqService] publish: CRITICAL: Channel reported ready after wait, but publish check failed. State: ${state}`);
-              // This indicates a potential bug in state management or waitForChannel.
-              throw new Error(`MQ channel state error after readiness wait. Cannot publish. State: ${state}`);
-         }
+        //  if (!this.isChannelReady || !this.channel?.send) {
+        //       const state = `isChannelReady: ${this.isChannelReady}, channel: ${!!this.channel}, channel.send: ${!!this.channel?.send}`;
+        //       console.error(`[MqService] publish: CRITICAL: Channel reported ready after wait, but publish check failed. State: ${state}`);
+        //       // This indicates a potential bug in state management or waitForChannel.
+        //       throw new Error(`MQ channel state error after readiness wait. Cannot publish. State: ${state}`);
+        //  }
+
+        // services/iglm-system/shared/mqService.js (inside async publish)
+        // Check if channel is ready (isChannelReady is set by init/createChannel/error handlers)
+        if (!this.isChannelReady) { // <-- Corrected check
+            const state = `isChannelReady: ${this.isChannelReady}`; // Simplify state logged
+            logger.error(`[MqService] publish: Cannot publish: Channel is not ready (isChannelReady is false). State: ${state}`); // Updated log message
+            throw new Error(`MQ Channel is not ready for publishing. State: ${state}`); // Updated error message
+        }
 
         // check if channel.confirmSelect() has been called - a bit more robust check
          // waitForConfirms exists only on channels returned by createChannel() after confirmSelect()
