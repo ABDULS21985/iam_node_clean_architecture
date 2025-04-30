@@ -14,14 +14,19 @@
   "dependencies": {
     "amqplib": "^0.10.7",
     "axios": "^1.9.0",
+    "axios-retry": "^4.5.0",
     "convict": "^6.2.4",
+    "dotenv": "^10.0.0",
     "express": "^5.1.0",
+    "ioredis": "^5.6.1",
     "ldapjs": "^3.0.7",
     "mysql2": "^3.14.0",
     "node-cron": "^3.0.3",
     "oracledb": "^6.8.0",
     "pg": "^8.15.5",
+    "sequelize": "^6.37.7",
     "soap": "^1.1.11",
-    "ssh2": "^1.16.0"
+    "ssh2": "^1.16.0",
+    "winston": "^3.17.0"
   }
 }

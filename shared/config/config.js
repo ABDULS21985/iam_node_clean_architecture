@@ -107,5 +107,89 @@ module.exports = {
         underscored:     true,
         freezeTableName: true
       }
+    },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Identity Collection Service database
+  // ────────────────────────────────────────────────────────────────────────────
+  idcs: {
+    username: process.env.IDCS_DB_USER     || process.env.DB_USER     || 'postgres',
+    password: process.env.IDCS_DB_PASSWORD || process.env.DB_PASSWORD || 'Secured3211',
+    database: process.env.IDCS_DB_NAME     || 'idcs_dev',
+    host:     process.env.IDCS_DB_HOST     || process.env.DB_HOST     || 'localhost',
+    port:     process.env.IDCS_DB_PORT     || process.env.DB_PORT     || 5432,
+    dialect:  'postgres',
+    logging:  false,
+    define: {
+      underscored:     true,
+      freezeTableName: true
     }
-   };
+  },
+
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Mover Service database
+  // ────────────────────────────────────────────────────────────────────────────
+  mover: {
+    username: process.env.MOVER_DB_USER     || process.env.DB_USER     || 'postgres',
+    password: process.env.MOVER_DB_PASSWORD || process.env.DB_PASSWORD || 'Secured3211',
+    database: process.env.MOVER_DB_NAME     || 'mover_dev',
+    host:     process.env.MOVER_DB_HOST     || process.env.DB_HOST     || 'localhost',
+    port:     process.env.MOVER_DB_PORT     || process.env.DB_PORT     || 5432,
+    dialect:  'postgres',
+    logging:  false,
+    define: {
+      underscored:     true,
+      freezeTableName: true
+    }
+  },
+
+  // ────────────────────────────────────────────────────────────────────────────
+  // Provisioning Service database
+  // ────────────────────────────────────────────────────────────────────────────
+  provisioning: {
+    username: process.env.PROV_DB_USER     || process.env.DB_USER     || 'postgres',
+    password: process.env.PROV_DB_PASSWORD || process.env.DB_PASSWORD || 'Secured3211',
+    database: process.env.PROV_DB_NAME     || 'provisioning_dev',
+    host:     process.env.PROV_DB_HOST     || process.env.DB_HOST     || 'localhost',
+    port:     process.env.PROV_DB_PORT     || process.env.DB_PORT     || 5432,
+    dialect:  'postgres',
+    logging:  false,
+    define: {
+      underscored:     true,
+      freezeTableName: true
+    }
+  },
+
+    // --- Discovery Service database ---
+  discovery: {
+    username: process.env.DISCOVERY_DB_USER     || process.env.DB_USER     || 'postgres',
+    password: process.env.DISCOVERY_DB_PASSWORD || process.env.DB_PASSWORD || 'Secured3211',
+    database: process.env.DISCOVERY_DB_NAME     || 'discovery_dev',
+    host:     process.env.DISCOVERY_DB_HOST     || process.env.DB_HOST     || 'localhost',
+    port:     process.env.DISCOVERY_DB_PORT     || process.env.DB_PORT     || 5432,
+    dialect:  'postgres',
+    logging:  false,
+    define: {
+      underscored:     true,
+      freezeTableName: true
+    }
+  },
+
+    // --- Discovery Audit local DB (for CollectionRunsAudit) ---
+  discoveryAudit: {
+    username: process.env.DISCOVERY_DB_USER     || 'postgres',
+    password: process.env.DISCOVERY_DB_PASSWORD || 'Secured3211',
+    database: process.env.DISCOVERY_DB_NAME     || 'discovery_dev',
+    host:     process.env.DISCOVERY_DB_HOST     || 'localhost',
+    port:     process.env.DISCOVERY_DB_PORT     || 5432,
+    dialect:  'postgres',
+    logging:  false,
+    define: {
+      underscored:     true,
+      freezeTableName: true
+    }
+  }
+
+
+};

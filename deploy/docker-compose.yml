@@ -168,6 +168,31 @@ services:
     networks: [ backend ]
 
   # ────────────────────────────────────────────────────────────────────────────
+  # Discovery Service Database
+  # ────────────────────────────────────────────────────────────────────────────
+  discovery-db:
+    image: postgres:14
+    container_name: iglm-discovery-db
+    restart: unless-stopped
+    env_file: [ ../.env ]
+    environment:
+      POSTGRES_USER:          ${DISCOVERY_DB_USER}
+      POSTGRES_PASSWORD:      ${DISCOVERY_DB_PASSWORD}
+      POSTGRES_DB:            ${DISCOVERY_DB_NAME}
+      POSTGRES_HOST_AUTH_METHOD: md5
+    ports:
+      - "5438:5432"           # host 5438 → container 5432
+    volumes:
+      - discovery-db-data:/var/lib/postgresql/data
+      - ../scripts/discovery/:/docker-entrypoint-initdb.d/:ro
+    healthcheck:
+      test:     [ "CMD-SHELL", "pg_isready -U ${DISCOVERY_DB_USER}" ]
+      interval: 10s
+      timeout:  5s
+      retries:  5
+    networks: [ backend ]
+
+  # ────────────────────────────────────────────────────────────────────────────
   # Messaging / Event Bus (RabbitMQ)
   # ────────────────────────────────────────────────────────────────────────────
   rabbitmq:
@@ -241,6 +266,7 @@ services:
       REDIS_PORT: 6379    # <-- Use internal container port
       REDIS_PASSWORD: ${REDIS_PASSWORD} # <-- Still load from .env
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0 # <-- Update if needed, or construct in code
+      MESSAGE_QUEUE_URL:  amqp://guest:guest@rabbitmq:5672/
       # HRMS DB details might also need overrides if IDCS connects to it using DB_HOST/DB_PORT from .env
       HRMS_DB_HOST: hrms-db # <-- Connect to hrms-db service by name
       HRMS_DB_PORT: 5432    # <-- Use internal container port
@@ -370,6 +396,45 @@ services:
       consul:          { condition: service_healthy }
     networks: [ backend ]
 
+
+  # ────────────────────────────────────────────────────────────────────────────
+  # Discovery Service
+  # ────────────────────────────────────────────────────────────────────────────
+  discovery-service:
+    build:
+      context: ..
+      dockerfile: services/discovery-service/Dockerfile
+    volumes:
+      - ../shared:/app/shared:ro
+    container_name: iglm-discovery
+    restart: on-failure
+    env_file: [ ../.env ]
+    environment:
+      DB_HOST:          config-db           # Central config DB
+      DB_PORT:          5432                # Internal container port
+      DISCOVERY_DB_HOST: discovery-db       # Discovery-DB service name
+      DISCOVERY_DB_PORT: 5432               # Internal container port
+      MESSAGE_QUEUE_URL: amqp://guest:guest@rabbitmq:5672/
+      REDIS_URL:         redis://:${REDIS_PASSWORD}@redis:6379/0
+      CONSUL_HOST:       consul
+      # (Optional) override other DBs or services as needed
+    ports:
+      - "${DISCOVERY_PORT}:${DISCOVERY_PORT}"
+    depends_on:
+      config-db:      { condition: service_healthy }
+      discovery-db:   { condition: service_healthy }
+      rabbitmq:       { condition: service_started }
+      redis:          { condition: service_healthy }
+      consul:         { condition: service_healthy }
+    networks: [ backend ]
+
+
+
+
+
+
+
+
   # ────────────────────────────────────────────────────────────────────────────
   # API Gateway
   # ────────────────────────────────────────────────────────────────────────────
@@ -408,6 +473,7 @@ volumes:
   mover-db-data:
   leaver-db-data:
   provisioning-db-data:
+  discovery-db-data:
   
 
 networks:

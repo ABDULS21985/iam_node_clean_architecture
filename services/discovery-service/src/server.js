@@ -6,13 +6,18 @@ require('dotenv').config({ path: '../../../.env' });
 
 // --- Database Setup (for local Audit tracking) ---
 const { Sequelize } = require('sequelize');
-// Assuming your discovery-DB configuration is in shared/config/config.js under a 'discoveryAudit' key
-const auditConfig = require('../../../shared/config/config.js').discoveryAudit; // Make sure to add 'discoveryAudit' config block
+// Load the entire config object first
+const config = require('../../../shared/config/config.js'); // <-- Load the whole config file
+// Get the discoveryAudit config directly from the loaded config object
+const auditConfig = config.discoveryAudit; // <-- CORRECTED: Access discoveryAudit directly
+
 // Instantiate Sequelize for the local audit database
+// This line remains the same, but auditConfig now has the 'dialect' property
 const auditSequelize = new Sequelize({ ...auditConfig });
 // Import and define the CollectionRunsAudit model using the local sequelize instance
 // Pass Sequelize.DataTypes instead of the Sequelize class itself in newer versions
-const CollectionRunsAudit = require('../../../shared/models/collectionrunsaudit')(auditSequelize, Sequelize.DataTypes);
+const CollectionRunsAuditModelDefinition = require('../../../shared/models/collectionrunsaudit');
+const CollectionRunsAudit = CollectionRunsAuditModelDefinition(auditSequelize, Sequelize.DataTypes);
 
 
 // --- Node.js Core & Express Setup ---
@@ -36,7 +41,7 @@ const winston = require('winston'); // For structured logging
 const ConfigService = require('../../../shared/configService'); // Adjust path as needed
 const MqService = require('../../../shared/mqService');      // Adjust path as needed
 // Assuming TemporaryStorage is needed by Discovery/Reconciliation logic
-const TemporaryStorage = require('../../../shared/temporaryStorage'); // <-- Corrected path (assuming shared)
+const TemporaryStorage = require('../../../shared/temporaryStorage');
 const models = require('../../../shared/models'); // Import all models (should include User, Application, etc., and potentially CollectionRun model if not local to DiscoveryLogic)
 
 
@@ -293,160 +298,12 @@ async function scheduleDiscoveryRuns(dependencies) { // <-- Accept dependencies
             // logger.debug(`Scheduled run promise removed. Active: ${activeCollectionRuns.size}`); // Optional debug
         });
 
-    }).catch(err => { // Catch errors during the cron task itself (e.g., if cron scheduling fails)
-        logger.error('Error scheduling cron task:', err); // <-- Use logger
-    });
+    }); // <-- CORRECTED: Removed .catch() here
 
     logger.info(`Discovery scheduler started.`); // <-- Use logger
-}
 
-
-// --- Service Initialization ---
-/**
- * Initializes all necessary components and starts the Discovery Service.
- */
-async function startService() {
-    // Logger is already initialized as a const outside this function.
-
-  try {
-    logger.info(`Starting service initialization...`);
-
-    // 1. Initialize Configuration Service and load configs for this service
-    await ConfigService.init();
-    logger.info(`ConfigService initialized successfully.`);
-
-    // Load configurations specific to this service
-    // Clear cache for service configs on startup (optional but safer if configs change)
-    // Using a standard key format assuming ConfigService provides this.
-    const serviceConfigCacheKey = ConfigService.mappingCacheKey(serviceName, 'Service', 'Service', serviceName, null);
-    if (ConfigService.clearCache && typeof ConfigService.clearCache === 'function') {
-        ConfigService.clearCache(serviceConfigCacheKey);
-        logger.debug(`Cleared ConfigService cache for key: ${serviceConfigCacheKey}`);
-    } else {
-        logger.warn(`ConfigService.clearCache(key) not available/exported. Cannot clear specific service cache key '${serviceConfigCacheKey}'.`);
-    }
-
-    // Load configurations specific to this service (now definitely loading from DB if cache was cleared)
-    serviceConfigs = await ConfigService.loadServiceConfigs(serviceName);
-
-    // Check if the essential 'discoveryIntervalMinutes' configuration is present
-    if (!serviceConfigs || serviceConfigs.discoveryIntervalMinutes === undefined || serviceConfigs.discoveryIntervalMinutes === null) {
-        logger.error(`Missing critical service configurations. Need 'discoveryIntervalMinutes'. Loaded:`, serviceConfigs);
-        throw new Error("Missing critical service configuration 'discoveryIntervalMinutes'");
-    }
-    logger.info(`Loaded service configurations.`, { configKeys: Object.keys(serviceConfigs), serviceConfigs }); // Log loaded configs for debugging
-
-
-    // 2. Initialize Message Queue Service
-    // Pass logger to MqService for its internal logging and robust handling
-    await MqService.init(logger); // <-- Passed logger
-    await MqService.waitForChannel(); // Wait for MQ channel to be ready
-    logger.info(`Message Queue connected and channel ready.`);
-
-    // MqService should add its own listeners for critical channel and connection errors internally using the logger it received.
-    // Removed redundant console listeners here.
-
-
-    // 3. Initialize Temporary Storage (Redis)
-    // Assume TemporaryStorage is needed by Discovery/Reconciliation logic
-    await TemporaryStorage.init(); // Assuming TemporaryStorage also takes logger or logs internally after init
-    logger.info('Temporary Storage initialized.');
-
-    // 4. Initialize local Audit DB connection and sync model
-    await auditSequelize.authenticate();
-    logger.info('Local Audit DB connection authenticated.');
-    // Sync the CollectionRunsAudit model - creates the table if it doesn't exist
-    await CollectionRunsAudit.sync(); // no-op if table already exists
-    logger.info('CollectionRunsAudit table ensured in local DB.');
-
-
-    // 5. Set up Message Queue Consumer (the Reconciliation Task Worker)
-    // This worker will listen for reconciliation triggers published by discovery runs
-    await setupReconciliationWorker(); // Will store consumer tag and track tasks internally
-    logger.info(`Reconciliation Worker setup complete and consuming messages.`);
-
-
-    // 6. Set up Express server (Optional - for health check)
-    app.get('/health', async (req, res) => { // Made async for potential API checks
-        // Basic health check - check Config DB connection, MQ status, Temporary Storage status, Reconciliation worker status, Scheduler status
-        const health = {
-            status: 'UP', // Assume UP unless critical component is DOWN
-            // Check Config DB connection state if possible
-            configDb: ConfigService.sequelize && ConfigService.isDbConnected ? 'CONNECTED' : 'DISCONNECTED', // Assuming ConfigService has isDbConnected
-            // Check local Audit DB status
-            auditDb: auditSequelize && auditSequelize.authenticate ? (await auditSequelize.authenticate().then(() => 'CONNECTED').catch(() => 'DISCONNECTED')) : 'UNKNOWN', // Check connection state if possible
-
-            // Use MqService.isReady getter for MQ status
-            mqService: MqService.isReady ? 'CONNECTED' : 'DISCONNECTED',
-            // Check Redis status - Assuming TemporaryStorage exposes isReady getter
-            temporaryStorage: TemporaryStorage.isReady ? 'CONNECTED' : 'DISCONNECTED',
-            // Check if reconciliation worker consumer is active (consumer tag set and MQ ready)
-            reconciliationWorker: (!!reconciliationConsumerTag && MqService.isReady) ? 'ACTIVE' : 'INACTIVE', // Check reconciliationConsumerTag
-             // Check if scheduler is active (task instance exists)
-             discoveryScheduler: !!scheduledDiscoveryTask ? 'ACTIVE' : 'INACTIVE', // Check scheduledDiscoveryTask
-             // TODO: Add checks for connectivity to target applications/Provisioning API if applicable (similar to worker services)
-             // provisioningApi: provisioningApiStatus, // If ReconciliationLogic calls Provisioning
-        };
-
-        // Determine overall HTTP status based on component health
-        // Critical components: Config DB, Audit DB, MQ Service, Reconciliation Worker (to process triggers), Scheduler (to generate triggers), Temp Storage
-        const overallStatus = (health.configDb === 'CONNECTED' && health.auditDb === 'CONNECTED' && health.mqService === 'CONNECTED' && health.reconciliationWorker === 'ACTIVE' && health.discoveryScheduler === 'ACTIVE' && health.temporaryStorage === 'CONNECTED') ? 200 : 503; // <-- Include audit DB, worker, scheduler, temp storage
-
-        if (overallStatus !== 200) {
-            logger.warn('Health check reported degraded status.', health);
-        } else {
-            logger.debug('Health check reported healthy status.', health); // Use debug for frequent healthy checks
-        }
-        res.status(overallStatus).json(health);
-    });
-
-    // 6. Start the Express server listening for incoming requests (like health checks)
-    server = app.listen(port, () => { // Capture server instance for graceful shutdown
-      logger.info(`Service listening on port ${port}`);
-    });
-
-
-    // 7. Schedule the core data discovery process
-    // Pass the dependencies needed by performDiscoveryRun, including the activeCollectionRuns Set
-    const discoveryRunDependencies = { // <-- Create dependencies object
-        logger,
-        isShuttingDown, // Pass shutdown state
-        serviceConfigs,
-        configService: ConfigService,
-        mqService: MqService,
-        models: models,
-        temporaryStorage: TemporaryStorage, // Pass temporary storage
-        activeCollectionRuns: activeCollectionRuns // Pass the Set for tracking
-    };
-    await scheduleDiscoveryRuns(discoveryRunDependencies); // <-- Pass dependencies
-
-    // Optionally, trigger an immediate run on startup for testing/initial sync
-    if (process.env.RUN_ON_STARTUP !== 'false') { // Allow disabling immediate run via env var
-        logger.info(`Triggering immediate discovery run on startup.`);
-        // Call performDiscoveryRun directly, passing dependencies
-        // We don't await here so startup isn't blocked by first run.
-        const immediateRunPromise = performDiscoveryRun(discoveryRunDependencies); // Capture the promise
-        // Track this immediate run promise for graceful shutdown
-        activeCollectionRuns.add(immediateRunPromise);
-        immediateRunPromise.finally(() => { // Remove from set when it settles
-            activeCollectionRuns.delete(immediateRunPromise);
-            // logger.debug(`Immediate run promise removed. Active: ${activeCollectionRuns.size}`); // Optional debug
-        });
-
-    } else {
-        logger.info(`Immediate discovery run on startup disabled via environment variable.`);
-    }
-
-
-    logger.info(`Service initialization complete. Service is ready.`);
-
-  } catch (error) {
-    // Catch any errors during the service initialization phase
-    const log = logger || console; // Use logger if initialized, otherwise fallback
-    log.error(`Failed to start service.`, error);
-    // TODO: Log startup failure to a centralized logging system before exiting
-    process.exit(1); // Exit process immediately if startup fails
-  }
+    // You might return the scheduledTask object if you need to stop it later
+    return scheduledTask;
 }
 
 
@@ -547,6 +404,7 @@ async function setupReconciliationWorker() {
 
                 } catch (error) {
                    // Catch any errors that occur *during* the processing of a specific message (after payload validation)
+                   // or errors from axios after retries exhausted.
                    logger.error(`Worker error processing reconciliation trigger for run ID ${runId || 'N/A'}:`, {
                       deliveryTag: deliveryTag, // <-- Use captured delivery tag
                       correlationId: correlationId, // <-- Use captured correlation id
@@ -563,9 +421,9 @@ async function setupReconciliationWorker() {
                   try { MqService.channel?.nack(msg, false, false); } catch (nackErr) { logger.error('Worker: Failed to NACK message after processing error:', { deliveryTag, correlationId, runId: runId || 'N/A', nackErr: nackErr.message }); } // <-- Use logger, optional chaining
                   // TODO: Log this processing error properly, potentially store failure details for reporting or manual review via DLQ.
                 } finally {
-                    // Remove this task's promise from the set of active tasks
-                    activeReconciliationTasks.delete(processingTask); // <-- Use Set.delete()
-                    logger.debug(`Worker: Task for message ${deliveryTag} finished. Active tasks remaining: ${activeReconciliationTasks.size}`, { deliveryTag }); // <-- Use logger
+                     // Remove this task's promise from the set of active tasks
+                     activeReconciliationTasks.delete(processingTask); // <-- Use Set.delete()
+                     logger.debug(`Worker: Task for message ${deliveryTag} finished. Active tasks remaining: ${activeReconciliationTasks.size}`, { deliveryTag }); // <-- Use logger
                 }
             })(); // Immediately invoke the async processing task
 

@@ -161,4 +161,5 @@ module.exports = {
   close, // Export close for graceful shutdown
   getStatus, // Export status getter
   redisClient // Exporting the client instance itself (use with caution)
+  
 };
