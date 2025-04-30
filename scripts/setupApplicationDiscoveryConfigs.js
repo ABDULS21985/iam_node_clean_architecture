@@ -226,12 +226,12 @@ const connectorDefs = [
     configuration: {
       connection: {
         url: process.env.LDAP_URL || "ldap://localhost:389",
-        bindDn: process.env.LDAP_BIND_DN || "cn=BindUser,dc=example,dc=com",
+        bindDn: process.env.LDAP_BIND_DN || "cn=BindUser,dc=katangatest,dc=com",
         bindPassword: process.env.LDAP_BIND_PASSWORD || "yoursecurepassword"
       },
       userMapping: {
         userDnTemplate: process.env.LDAP_USER_DN_TEMPLATE ||
-          "cn=:userIdInApp,ou=Users,dc=example,dc=com"
+          "cn=:userIdInApp,ou=Users,dc=katangatest,dc=com"
       },
       groupMemberAttribute: "member"
     },
@@ -244,16 +244,16 @@ const connectorDefs = [
     configuration: {
       connection: {
         url: process.env.LDAP_URL || "ldap://localhost:389",
-        bindDn: process.env.LDAP_BIND_DN || "cn=BindUser,dc=example,dc=com",
+        bindDn: process.env.LDAP_BIND_DN || "cn=BindUser,dc=katangatest,dc=com",
         bindPassword: process.env.LDAP_BIND_PASSWORD || "yoursecurepassword"
       },
       search: {
-        userSearchBase: process.env.LDAP_USER_BASE || "ou=Users,dc=example,dc=com",
+        userSearchBase: process.env.LDAP_USER_BASE || "ou=Users,dc=katangatest,dc=com",
         userSearchFilter: "(objectClass=user)",
         userSearchAttributes: ["dn","sAMAccountName","userPrincipalName","memberOf"]
       },
       groupSearch: {
-        base: process.env.LDAP_GROUP_BASE || "ou=Groups,dc=example,dc=com",
+        base: process.env.LDAP_GROUP_BASE || "ou=Groups,dc=katangatest,dc=com",
         filter: "(objectClass=group)",
         attributes: ["dn","cn","member"]
       }
@@ -263,12 +263,12 @@ const connectorDefs = [
 
   // Generic REST-API Provisioning & Discovery
   {
-    name: "Example REST App Provisioning",
+    name: "katangatest REST App Provisioning",
     serviceType: "Provisioning",
     type: "generic-rest-api",
     configuration: {
       api: {
-        baseUrl: process.env.REST_APP_BASE_URL || "https://api.example.com/v1",
+        baseUrl: process.env.REST_APP_BASE_URL || "https://api.katangatest.com/v1",
         authentication: { type: "apiKey", header: "X-API-Key", value: process.env.REST_APP_API_KEY || "apikey" },
         endpoints: {
           grantEntitlement: {
@@ -283,25 +283,25 @@ const connectorDefs = [
         }
       }
     },
-    metadata: { description: "Provisioning connector for Example REST App" }
+    metadata: { description: "Provisioning connector for katangatest REST App" }
   },
   {
-    name: "Example REST App Discovery",
+    name: "katangatest REST App Discovery",
     serviceType: "Discovery",
     type: "generic-rest-api",
     configuration: {
       api: {
-        baseUrl: process.env.REST_APP_BASE_URL || "https://api.example.com/v1",
+        baseUrl: process.env.REST_APP_BASE_URL || "https://api.katangatest.com/v1",
         authentication: { type: "apiKey", header: "X-API-Key", value: process.env.REST_APP_API_KEY || "apikey" },
         endpoints: { discoverAccess: { method: "GET", path: "/access-report", params: { format: "json" } } }
       }
     },
-    metadata: { description: "Discovery connector for Example REST App" }
+    metadata: { description: "Discovery connector for katangatest REST App" }
   },
 
   // Generic SOAP Provisioning & Discovery
   {
-    name: "Example SOAP App Provisioning",
+    name: "katangatest SOAP App Provisioning",
     serviceType: "Provisioning",
     type: "generic-soap",
     configuration: {
@@ -327,10 +327,10 @@ const connectorDefs = [
         }
       }
     },
-    metadata: { description: "Provisioning connector for Example SOAP App" }
+    metadata: { description: "Provisioning connector for katangatest SOAP App" }
   },
   {
-    name: "Example SOAP App Discovery",
+    name: "katangatest SOAP App Discovery",
     serviceType: "Discovery",
     type: "generic-soap",
     configuration: {
@@ -354,12 +354,12 @@ const connectorDefs = [
         }
       }
     },
-    metadata: { description: "Discovery connector for Example SOAP App" }
+    metadata: { description: "Discovery connector for katangatest SOAP App" }
   },
 
   // Generic CMD-Exec Provisioning & Discovery
   {
-    name: "Example CMD App Provisioning",
+    name: "katangatest CMD App Provisioning",
     serviceType: "Provisioning",
     type: "cmd-exec",
     configuration: {
@@ -370,10 +370,10 @@ const connectorDefs = [
       },
       successExitCodes: { grant: [0,1], revoke: [0] }
     },
-    metadata: { description: "Provisioning connector for Example CMD App" }
+    metadata: { description: "Provisioning connector for katangatest CMD App" }
   },
   {
-    name: "Example CMD App Discovery",
+    name: "katangatest CMD App Discovery",
     serviceType: "Discovery",
     type: "cmd-exec",
     configuration: {
@@ -381,44 +381,116 @@ const connectorDefs = [
       discoveryCommands: { dumpAllAccess: { template: "/opt/myapp/reports/dump-access.sh --format csv" } },
       commandOutputMapping: { parser: "csv", columns: ["user_id","entitlement_id","status"] }
     },
-    metadata: { description: "Discovery connector for Example CMD App" }
+    metadata: { description: "Discovery connector for katangatest CMD App" }
   }
 ];
 
 /** 2) Define all Mapping configs (including “service” configs + attribute→role + provisioning & discovery mappings) **/
 const mappingDefs = [
   // HRMS→User mapping
-  {
-    name: "Postgres HRMS to IGLM User Mapping",
-    sourceType: "IdentitySource",
-    targetType: "User",
-    sourceId: null,
-    mappingRules: {
-      attributeMappings: {
-        firstName: "first_name", lastName: "last_name", email: "email",
-        hrmsId: "employee_id", status: "job_status", hireDate: "date_of_hire",
-        exitDate: "termination_date", department: "department_name", title: "job_title",
-        location: "job_location", mobileNumber: "mobile_number"
-      },
-      statusMapping: {
-        Active: "active", "On Leave": "active",
-        Terminated: "exited", "Pending Hire": "pending_joiner", Inactive: "inactive"
-      },
-      metadataMapping: {
-        personId: "person_id", middleName: "middle_name",
-        supervisorHrmsId: "supervisor_id", headOfOfficeHrmsId: "head_of_office_id",
-        jobLocationId: "job_location_id", departmentId: "department_id",
-        divisionId: "division_id", divisionName: "division_name",
-        officeId: "office_id", officeName: "office_name",
-        gradeId: "grade_id", gradeLevel: "grade", partyId: "party_id"
-      },
-      metadata: {
-        sourceUniqueIdField: "employee_id",
-        statusSourceField: "job_status"
-      }
+
+  // HRMS→User mapping
+{
+  name: "Postgres HRMS to IGLM User Mapping",
+  sourceType: "IdentitySource",
+  targetType: "User",
+  sourceId: null,
+  mappingRules: {
+    attributeMappings: {
+      firstName: "first_name",
+      lastName: "last_name",
+      email: "email",
+      hrmsId: "employee_id",
+      status: "job_status", // Maps HRMS status string for lookup in statusMapping
+      jobStatus: "job_status", // <-- ADDED: Maps raw HRMS status string to the jobStatus column
+      hireDate: "date_of_hire",
+      exitDate: "termination_date",
+
+      // Corrected mappings for fields that map to specific User model columns
+      departmentName: "department_name", // <-- CORRECTED: Was "department"
+      departmentId: "department_id", // <-- ADDED: Maps to direct departmentId column
+      supervisorId: "supervisor_id", // <-- ADDED: Maps to direct supervisorId column
+      headOfOfficeId: "head_of_office_id", // <-- ADDED: Maps to direct headOfOfficeId column
+      jobTitle: "job_title", // <-- CORRECTED: Was "title"
+      jobLocation: "job_location", // <-- ADDED/KEPT: Maps to direct jobLocation column
+      jobLocationId: "job_location_id", // <-- ADDED: Maps to direct jobLocationId column
+      location: "job_location", // <-- Maps to direct location column (keeping for now, but source 'location' not in query)
+
+      mobileNumber: "mobile_number", // <-- ADDED: Maps to direct mobileNumber column
+
+      // Added mappings for other direct User model columns present in HRMS data
+      divisionId: "division_id", // <-- ADDED
+      divisionName: "division_name", // <-- ADDED
+      officeId: "office_id", // <-- ADDED
+      officeName: "office_name", // <-- ADDED
+      gradeId: "grade_id", // <-- ADDED
+      grade: "grade", // <-- ADDED: Maps to direct grade column (vs gradeLevel in metadata)
+      partyId: "party_id" // <-- ADDED
+
     },
-    metadata: {}
+    statusMapping: { // Map HRMS status values to IGLM status values
+      Active: "active",
+      "Active Assignment": "active", // From previous logs
+      "On Leave": "active",
+      "Maternity Leave Without Pay": "on_leave", // From previous logs
+      "Suspend Employee from Payroll": "inactive", // From previous logs
+      Terminated: "exited",
+      "Pending Hire": "pending_joiner",
+      Inactive: "inactive" // From previous logs
+    },
+    metadataMapping: { // Map HRMS fields to nested keys in the IGLM User metadata JSONB (as before)
+      personId: "person_id",
+      middleName: "middle_name",
+      supervisorHrmsId: "supervisor_id",
+      headOfOfficeHrmsId: "head_of_office_id",
+      jobLocationId: "job_location_id", // Duplicate of direct column mapping, kept for metadata
+      departmentId: "department_id", // Duplicate of direct column mapping, kept for metadata
+      divisionId: "division_id", // Duplicate of direct column mapping, kept for metadata
+      divisionName: "division_name", // Duplicate of direct column mapping, kept for metadata
+      officeId: "office_id", // Duplicate of direct column mapping, kept for metadata
+      officeName: "office_name", // Duplicate of direct column mapping, kept for metadata
+      gradeId: "grade_id", // Duplicate of direct column mapping, kept for metadata
+      gradeLevel: "grade", // <-- Renamed from 'grade' in your sample, mapping to 'grade' source, kept for metadata
+      partyId: "party_id" // Duplicate of direct column mapping, kept for metadata
+    },
+    metadata: { // General metadata about the mapping rules themselves
+      sourceUniqueIdField: "employee_id", // Key name in raw HRMS data for unique ID
+      statusSourceField: "job_status" // Key name in raw HRMS data for status (used by DataProcessor for statusMapping lookup)
+    }
   },
+  metadata: {} // Top-level metadata for the MappingConfig entry
+},
+  // {
+  //   name: "Postgres HRMS to IGLM User Mapping",
+  //   sourceType: "IdentitySource",
+  //   targetType: "User",
+  //   sourceId: null,
+  //   mappingRules: {
+  //     attributeMappings: {
+  //       firstName: "first_name", lastName: "last_name", email: "email",
+  //       hrmsId: "employee_id", status: "job_status", hireDate: "date_of_hire",
+  //       exitDate: "termination_date", department: "department_name", title: "job_title",
+  //       location: "job_location", mobileNumber: "mobile_number"
+  //     },
+  //     statusMapping: {
+  //       Active: "active", "On Leave": "active",
+  //       Terminated: "exited", "Pending Hire": "pending_joiner", Inactive: "inactive"
+  //     },
+  //     metadataMapping: {
+  //       personId: "person_id", middleName: "middle_name",
+  //       supervisorHrmsId: "supervisor_id", headOfOfficeHrmsId: "head_of_office_id",
+  //       jobLocationId: "job_location_id", departmentId: "department_id",
+  //       divisionId: "division_id", divisionName: "division_name",
+  //       officeId: "office_id", officeName: "office_name",
+  //       gradeId: "grade_id", gradeLevel: "grade", partyId: "party_id"
+  //     },
+  //     metadata: {
+  //       sourceUniqueIdField: "employee_id",
+  //       statusSourceField: "job_status"
+  //     }
+  //   },
+  //   metadata: {}
+  // },
 
   // Service-level configurations (ICS, Joiner, Mover, Leaver, Discovery)
   {
@@ -482,9 +554,9 @@ const mappingDefs = [
         "T24 Core Banking (Oracle DB)",
         "Active Directory / LDAP",
         "Customer Portal (MySQL DB)",
-        "Example REST App",
-        "Example SOAP App",
-        "Example CMD App"
+        "katangatest REST App",
+        "katangatest SOAP App",
+        "katangatest CMD App"
       ],
       concurrencyLimit: 5
     },
@@ -661,11 +733,11 @@ const mappingDefs = [
       userIdentifierMapping: { sourceField: "email", targetFormat: "string" },
       entitlementMappings: {
         "00000000-0000-0000-0000-000000000401": {
-          appEntitlementId: "cn=SalesGroup,ou=Groups,dc=example,dc=com",
+          appEntitlementId: "cn=ITDGroup,ou=Groups,dc=katangatest,dc=com",
           operationType: "groupMembership"
         },
         "00000000-0000-0000-0000-000000000402": {
-          appEntitlementId: "cn=VPNUsers,ou=Groups,dc=example,dc=com",
+          appEntitlementId: "cn=VPNUsers,ou=Groups,dc=katangatest,dc=com",
           operationType: "groupMembership"
         }
       },
@@ -692,7 +764,7 @@ const mappingDefs = [
 
   // REST Provisioning Mapping
   {
-    name: "Example REST App Provisioning Mappings",
+    name: "katangatest REST App Provisioning Mappings",
     sourceType: "Provisioning",
     targetType: "ApplicationEntitlements",
     sourceId: null,
@@ -710,7 +782,7 @@ const mappingDefs = [
     metadata: { description: "Maps IGLM entitlements to REST provisioning actions." }
   },
   {
-    name: "Example REST App Discovery Mappings",
+    name: "katangatest REST App Discovery Mappings",
     sourceType: "Discovery",
     targetType: "DiscoveredStateMapping",
     sourceId: null,
@@ -732,7 +804,7 @@ const mappingDefs = [
 
   // SOAP Provisioning Mapping
   {
-    name: "Example SOAP App Provisioning Mappings",
+    name: "katangatest SOAP App Provisioning Mappings",
     sourceType: "Provisioning",
     targetType: "ApplicationEntitlements",
     sourceId: null,
@@ -749,7 +821,7 @@ const mappingDefs = [
     metadata: { description: "Maps IGLM entitlements to SOAP provisioning actions." }
   },
   {
-    name: "Example SOAP App Discovery Mappings",
+    name: "katangatest SOAP App Discovery Mappings",
     sourceType: "Discovery",
     targetType: "DiscoveredStateMapping",
     sourceId: null,
@@ -767,7 +839,7 @@ const mappingDefs = [
 
   // CMD Provisioning Mapping
   {
-    name: "Example CMD App Provisioning Mappings",
+    name: "katangatest CMD App Provisioning Mappings",
     sourceType: "Provisioning",
     targetType: "ApplicationEntitlements",
     sourceId: null,
@@ -784,7 +856,7 @@ const mappingDefs = [
     metadata: { description: "Maps IGLM entitlements to CMD provisioning actions." }
   },
   {
-    name: "Example CMD App Discovery Mappings",
+    name: "katangatest CMD App Discovery Mappings",
     sourceType: "Discovery",
     targetType: "DiscoveredStateMapping",
     sourceId: null,
@@ -857,39 +929,39 @@ const appDefs = [
   },
   {
     application: {
-      name: "Example REST App",
+      name: "katangatest REST App",
       description: "Application managed via REST API",
       type: "rest-api",
       connectorId: null
     },
-    provisioningConnectorName: "Example REST App Provisioning",
-    discoveryConnectorName:   "Example REST App Discovery",
-    provisioningMappingName:   "Example REST App Provisioning Mappings",
-    discoveryMappingName:      "Example REST App Discovery Mappings"
+    provisioningConnectorName: "katangatest REST App Provisioning",
+    discoveryConnectorName:   "katangatest REST App Discovery",
+    provisioningMappingName:   "katangatest REST App Provisioning Mappings",
+    discoveryMappingName:      "katangatest REST App Discovery Mappings"
   },
   {
     application: {
-      name: "Example SOAP App",
+      name: "katangatest SOAP App",
       description: "Application managed via SOAP service",
       type: "soap",
       connectorId: null
     },
-    provisioningConnectorName: "Example SOAP App Provisioning",
-    discoveryConnectorName:   "Example SOAP App Discovery",
-    provisioningMappingName:   "Example SOAP App Provisioning Mappings",
-    discoveryMappingName:      "Example SOAP App Discovery Mappings"
+    provisioningConnectorName: "katangatest SOAP App Provisioning",
+    discoveryConnectorName:   "katangatest SOAP App Discovery",
+    provisioningMappingName:   "katangatest SOAP App Provisioning Mappings",
+    discoveryMappingName:      "katangatest SOAP App Discovery Mappings"
   },
   {
     application: {
-      name: "Example CMD App",
+      name: "katangatest CMD App",
       description: "Application managed via command-line tools",
       type: "cmd",
       connectorId: null
     },
-    provisioningConnectorName: "Example CMD App Provisioning",
-    discoveryConnectorName:   "Example CMD App Discovery",
-    provisioningMappingName:   "Example CMD App Provisioning Mappings",
-    discoveryMappingName:      "Example CMD App Discovery Mappings"
+    provisioningConnectorName: "katangatest CMD App Provisioning",
+    discoveryConnectorName:   "katangatest CMD App Discovery",
+    provisioningMappingName:   "katangatest CMD App Provisioning Mappings",
+    discoveryMappingName:      "katangatest CMD App Discovery Mappings"
   }
 ];
 
@@ -928,17 +1000,25 @@ async function upsertMapping(cfg) {
 
 /** Helper to link App→Connector & App→Mapping **/
 async function linkApp(appEntry, connectorEntry, mappingEntry, role) {
-  // connector
-  if (appEntry.connectorId !== connectorEntry.id) {
-    await appEntry.update({ connectorId: connectorEntry.id });
-    logInfo(`Linked ${appEntry.name} → ${role} Connector ${connectorEntry.name}`);
+  if (!connectorEntry) {
+    logWarn(`No ${role} Connector found for Application: ${appEntry.name}. Skipping connector linkage.`);
+  } else {
+    if (appEntry.connectorId !== connectorEntry.id) {
+      await appEntry.update({ connectorId: connectorEntry.id });
+      logInfo(`Linked ${appEntry.name} → ${role} Connector ${connectorEntry.name}`);
+    }
   }
-  // mapping
-  if (mappingEntry.sourceId !== appEntry.id) {
-    await mappingEntry.update({ sourceId: appEntry.id });
-    logInfo(`Linked ${role} MappingConfig ${mappingEntry.name} → Application ${appEntry.name}`);
+
+  if (!mappingEntry) {
+    logWarn(`No ${role} MappingConfig found for Application: ${appEntry.name}. Skipping mapping linkage.`);
+  } else {
+    if (mappingEntry.sourceId !== appEntry.id) {
+      await mappingEntry.update({ sourceId: appEntry.id });
+      logInfo(`Linked ${role} MappingConfig ${mappingEntry.name} → Application ${appEntry.name}`);
+    }
   }
 }
+
 
 /** Main orchestration **/
 async function runSetup() {

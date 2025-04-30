@@ -1,0 +1,373 @@
+#//iglm-iam-system/deploy/docker-compose.yml
+
+# -----------------------------------------------------------------------------  
+# Docker Compose for IGLM IAM System – REV 3 (2025-04-27)  
+# -----------------------------------------------------------------------------  
+
+services:
+
+  # ─────────────────────────────────────────────────────────────────────────────  
+  # HRMS Database (Mock PostgreSQL)  
+  # ─────────────────────────────────────────────────────────────────────────────  
+  hrms-db:
+    image: postgres:14
+    container_name: iglm-hrms-db
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      POSTGRES_USER:            ${HRMS_DB_USER}
+      POSTGRES_PASSWORD:        ${HRMS_DB_PASSWORD}
+      POSTGRES_DB:              ${HRMS_DB_NAME}
+      POSTGRES_HOST_AUTH_METHOD: md5
+    ports:
+      - "5432:5432"             # host 5432 → container 5432
+    volumes:
+      - hrms-db-data:/var/lib/postgresql/data
+      - ../scripts/init-hrms-db.sql:/docker-entrypoint-initdb.d/10_init-hrms-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${HRMS_DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [backend]
+
+ 
+# ─────────────────────────────────────────────────────────────────────────────  
+# Configuration Database (Central + IDCS Schema)
+# ─────────────────────────────────────────────────────────────────────────────  
+  config-db:
+    image: postgres:14
+    container_name: iglm-config-db
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      POSTGRES_USER:             ${DB_USER}
+      POSTGRES_PASSWORD:         ${DB_PASSWORD}
+      POSTGRES_DB:               ${DB_NAME}
+      POSTGRES_HOST_AUTH_METHOD: md5
+      POSTGRES_INITDB_ARGS:      "-A md5"
+    ports:
+      - "5433:5432"               # host 5433 → container 5432
+    volumes:
+      - config-db-data:/var/lib/postgresql/data
+      - ../scripts/init-extensions.sql:/docker-entrypoint-initdb.d/00_init-extensions.sql:ro
+      - ../scripts/init-idcs-db.sql:/docker-entrypoint-initdb.d/10_init-idcs-db.sql:ro
+      - ../scripts/init-create-idcs-user.sql:/docker-entrypoint-initdb.d/15_init-create-idcs-user.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [backend]
+
+
+  # idcs-db:
+  #   image: postgres:14
+  #   container_name: iglm-idcs-db
+  #   restart: unless-stopped
+  #   env_file:
+  #     - ../.env
+  #   environment:
+  #     POSTGRES_DB: ${IDCS_DB_NAME}        # from .env (idcs_dev)
+  #     POSTGRES_USER: ${IDCS_DB_USER}      # from .env (idcs_user)
+  #     POSTGRES_PASSWORD: ${IDCS_DB_PASSWORD} # from .env (Secured3211)
+  #     POSTGRES_HOST_AUTH_METHOD: md5      # Explicit authentication
+  #     POSTGRES_INITDB_ARGS: "-A md5"       # Force password auth
+  #   ports:
+  #     - "5438:5432"  # host:container - idcs-db exposed at 5438 locally
+  #   volumes:
+  #     - idcs-db-data:/var/lib/postgresql/data
+  #     - ../scripts/init-extensions.sql:/docker-entrypoint-initdb.d/00_init-extensions.sql:ro
+  #     - ../scripts/init-create-idcs-user.sql:/docker-entrypoint-initdb.d/15_init-create-idcs-user.sql:ro
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U ${IDCS_DB_USER}"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #   networks:
+  #     - backend
+
+
+
+
+  # ─────────────────────────────────────────────────────────────────────────────  
+  # Joiner Service Database  
+  # ─────────────────────────────────────────────────────────────────────────────  
+  joiner-db:
+    image: postgres:14
+    container_name: iglm-joiner-db
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      POSTGRES_USER:            ${JOINER_DB_USER}
+      POSTGRES_PASSWORD:        ${JOINER_DB_PASSWORD}
+      POSTGRES_DB:              ${JOINER_DB_NAME}
+      POSTGRES_HOST_AUTH_METHOD: md5
+      POSTGRES_INITDB_ARGS:     "-A md5"
+    ports:
+      - "5434:5432"             # host 5434 → container 5432
+    volumes:
+      - joiner-db-data:/var/lib/postgresql/data
+      - ../scripts/init-joiner-db.sql:/docker-entrypoint-initdb.d/10_init-joiner-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${JOINER_DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [backend]
+
+  # ─────────────────────────────────────────────────────────────────────────────  
+  # Mover Service Database  
+  # ─────────────────────────────────────────────────────────────────────────────  
+  mover-db:
+    image: postgres:14
+    container_name: iglm-mover-db
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      POSTGRES_USER:            ${MOVER_DB_USER}
+      POSTGRES_PASSWORD:        ${MOVER_DB_PASSWORD}
+      POSTGRES_DB:              ${MOVER_DB_NAME}
+      POSTGRES_HOST_AUTH_METHOD: md5
+      POSTGRES_INITDB_ARGS:     "-A md5"
+    ports:
+      - "5435:5432"             # host 5435 → container 5432
+    volumes:
+      - mover-db-data:/var/lib/postgresql/data
+      - ../scripts/init-mover-db.sql:/docker-entrypoint-initdb.d/10_init-mover-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MOVER_DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [backend]
+
+  # ─────────────────────────────────────────────────────────────────────────────  
+  # Leaver Service Database  
+  # ─────────────────────────────────────────────────────────────────────────────  
+  leaver-db:
+    image: postgres:14
+    container_name: iglm-leaver-db
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      POSTGRES_USER:            ${LEAVER_DB_USER}
+      POSTGRES_PASSWORD:        ${LEAVER_DB_PASSWORD}
+      POSTGRES_DB:              ${LEAVER_DB_NAME}
+      POSTGRES_HOST_AUTH_METHOD: md5
+      POSTGRES_INITDB_ARGS:     "-A md5"
+    ports:
+      - "5436:5432"             # host 5436 → container 5432
+    volumes:
+      - leaver-db-data:/var/lib/postgresql/data
+      - ../scripts/init-leaver-db.sql:/docker-entrypoint-initdb.d/10_init-leaver-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LEAVER_DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [backend]
+
+  # ─────────────────────────────────────────────────────────────────────────────  
+  # Provisioning Service Database  
+  # ─────────────────────────────────────────────────────────────────────────────  
+  provisioning-db:
+    image: postgres:14
+    container_name: iglm-provisioning-db
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      POSTGRES_USER:            ${PROV_DB_USER}
+      POSTGRES_PASSWORD:        ${PROV_DB_PASSWORD}
+      POSTGRES_DB:              ${PROV_DB_NAME}
+      POSTGRES_HOST_AUTH_METHOD: md5
+      POSTGRES_INITDB_ARGS:     "-A md5"
+    ports:
+      - "5437:5432"             # host 5437 → container 5432
+    volumes:
+      - provisioning-db-data:/var/lib/postgresql/data
+      - ../scripts/init-provisioning-db.sql:/docker-entrypoint-initdb.d/10_init-provisioning-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PROV_DB_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [backend]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Messaging / Event Bus (RabbitMQ)
+# ─────────────────────────────────────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: iglm-rabbitmq
+    restart: unless-stopped
+    env_file: 
+      - ../.env
+    environment:
+      RABBITMQ_DEFAULT_USER: ${MQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${MQ_PASSWORD}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks: [backend]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Distributed Cache (Redis)
+# ─────────────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:6-alpine
+    container_name: iglm-redis
+    restart: unless-stopped
+    env_file: 
+      - ../.env
+    command: >
+      redis-server --requirepass "${REDIS_PASSWORD}"
+    ports:
+      - "6379:6379"
+    networks: [backend]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Service Discovery (Consul)
+# ─────────────────────────────────────────────────────────────────────────────
+  consul:
+    image: consul:1.14
+    container_name: iglm-consul
+    restart: unless-stopped
+    command: agent -dev -client=0.0.0.0
+    ports:
+      - "8500:8500"
+    networks: [backend]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Identity Collection Service
+# ─────────────────────────────────────────────────────────────────────────────
+  idcs-service:
+    build:
+      context: ..
+      dockerfile: services/identity-collection-service/Dockerfile
+    container_name: iglm-idcs
+    restart: on-failure
+    env_file: 
+      - ../.env
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+    ports:
+      - "${IDCS_PORT}:${IDCS_PORT}"
+    
+    depends_on:
+      - config-db
+      - rabbitmq
+      - redis
+      - consul
+      - hrms-db
+    networks: [backend]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Joiner Service
+# ─────────────────────────────────────────────────────────────────────────────
+  joiner-service:
+    build:
+      context: ..
+      dockerfile: services/joiner-service/Dockerfile
+    container_name: iglm-joiner
+    restart: on-failure
+    env_file: 
+      - ../.env
+    ports:
+      - "${JOINER_PORT}:${JOINER_PORT}"
+    depends_on: [config-db, rabbitmq, redis, consul]
+    networks: [backend]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Mover Service
+# ─────────────────────────────────────────────────────────────────────────────
+  mover-service:
+    build:
+      context: ..
+      dockerfile: services/mover-service/Dockerfile
+    container_name: iglm-mover
+    restart: on-failure
+    env_file: 
+      - ../.env
+    ports:
+      - "${MOVER_PORT}:${MOVER_PORT}"
+    depends_on: [config-db, rabbitmq, redis, consul]
+    networks: [backend]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Leaver Service
+# ─────────────────────────────────────────────────────────────────────────────
+  leaver-service:
+    build:
+      context: ..
+      dockerfile: services/leaver-service/Dockerfile
+    container_name: iglm-leaver
+    restart: on-failure
+    env_file: 
+      - ../.env
+    ports:
+      - "${LEAVER_PORT}:${LEAVER_PORT}"
+    depends_on: [config-db, rabbitmq, redis, consul]
+    networks: [backend]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Provisioning Service
+# ─────────────────────────────────────────────────────────────────────────────
+  provisioning-service:
+    build:
+      context: ..
+      dockerfile: services/provisioning-service/Dockerfile
+    container_name: iglm-provisioning
+    restart: on-failure
+    env_file: 
+      - ../.env
+    ports:
+      - "${PROVISIONING_PORT}:${PROVISIONING_PORT}"
+    depends_on: [config-db, rabbitmq, redis, consul]
+    networks: [backend]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# API Gateway
+# ─────────────────────────────────────────────────────────────────────────────
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: gateway/Dockerfile
+    container_name: iglm-api-gateway
+    restart: on-failure
+    env_file: 
+      - ../.env
+    ports:
+      - "3000:3000"
+    depends_on:
+      - idcs-service
+      - joiner-service
+      - mover-service
+      - leaver-service
+      - provisioning-service
+    networks: [backend]
+
+# -----------------------------------------------------------------------------
+# Networks & Volumes
+# -----------------------------------------------------------------------------
+volumes:
+  config-db-data:
+  hrms-db-data:
+  joiner-db-data:
+  mover-db-data:
+  leaver-db-data:
+  provisioning-db-data:
+  # idcs-db-data:
+
+networks:
+  backend:
+    driver: bridge

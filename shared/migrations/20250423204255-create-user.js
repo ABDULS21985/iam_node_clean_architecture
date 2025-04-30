@@ -1,120 +1,126 @@
-// In your YYYYMMDDHHMMSS-create-user.js migration file
+// In your migration file (e.g., YYYYMMDDHHMMSS-create-user.js)
 'use strict';
+
 /** @type {import('sequelize-cli').Migration} */
 module.exports = {
   async up(queryInterface, Sequelize) {
+    // Ensure the uuid-ossp extension is available for uuid_generate_v4()
+    await queryInterface.sequelize.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp";`);
+
     await queryInterface.createTable('Users', {
       id: {
-        allowNull: false, // ID cannot be null
-        primaryKey: true, // This is the primary key
-        type: Sequelize.UUID, // Data type is UUID
-        defaultValue: Sequelize.literal('uuid_generate_v4()') // Use PostgreSQL's uuid_generate_v4() function
+        allowNull: false,
+        primaryKey: true,
+        type: Sequelize.UUID,
+        defaultValue: Sequelize.literal('uuid_generate_v4()')
       },
-      hrmsId: { // Unique identifier from the HRMS
+      hrmsId: {
         type: Sequelize.STRING,
-        allowNull: false, // HRMS ID should be required for users created from HRMS
-        unique: true // Ensure uniqueness at the DB level
+        allowNull: false,
+        unique: true
       },
       firstName: {
-        type: Sequelize.STRING, // Corrected type to Sequelize.STRING
+        type: Sequelize.STRING,
         allowNull: false
       },
-      middleName: { // Added as it appears in HRMS data
-        type: Sequelize.STRING, // Corrected type
-        allowNull: true // Allow null for middle name
+      middleName: {
+        type: Sequelize.STRING,
+        allowNull: true
       },
       lastName: {
-        type: Sequelize.STRING, // Corrected type
+        type: Sequelize.STRING,
         allowNull: false
       },
       email: {
-        type: Sequelize.STRING, // Corrected type
-        allowNull: true, // Email might not be mandatory for all users
-        unique: true // Email should be unique if present
+        type: Sequelize.STRING,
+        allowNull: true,
+        unique: true
       },
-      mobileNumber: { // Added as it appears in HRMS data
-        type: Sequelize.STRING, // Corrected type
-        allowNull: true // Mobile number might be optional
+      mobileNumber: {
+        type: Sequelize.STRING,
+        allowNull: true
       },
-      status: { // Current status in the IGLM system ('pending_joiner', 'active', 'inactive', 'exited')
-        type: Sequelize.STRING, // Corrected type
-        allowNull: false, // Matches model
-        defaultValue: 'pending_joiner' // Default status for new users
+      status: {
+        type: Sequelize.STRING,
+        allowNull: false,
+        defaultValue: 'pending_joiner'
       },
       hireDate: {
-        type: Sequelize.DATE, // Corrected type
-        allowNull: true // Hire date might not be strictly mandatory depending on HR data
+        type: Sequelize.DATE,
+        allowNull: true
       },
+      // Corrected column name to match the model field 'exitDate'
       exitDate: {
-        type: Sequelize.DATE, // Corrected type
-        allowNull: true // Exit date is null until termination
-      },
-      supervisorId: { // Supervisor HRMS ID
-        type: Sequelize.STRING, // Corrected type
-        allowNull: true // Supervisor ID might not be mandatory or available for all
-      },
-      headOfOfficeId: { // Head of Office HRMS ID
-        type: Sequelize.STRING, // Corrected type
-        allowNull: true // Head of Office ID might not be mandatory or available
-      },
-      jobTitle: { // Mapping of HRMS job_title field
-        type: Sequelize.STRING, // Corrected type
+        type: Sequelize.DATE,
         allowNull: true
       },
-      departmentId: { // Mapping of HRMS department_id field
-        type: Sequelize.STRING, // Corrected type
+      supervisorId: {
+        type: Sequelize.STRING,
         allowNull: true
       },
-      departmentName: { // Mapping of HRMS department_name field
-        type: Sequelize.STRING, // Corrected type
+      headOfOfficeId: {
+        type: Sequelize.STRING,
         allowNull: true
       },
-      divisionId: { // Mapping of HRMS division_id field
-        type: Sequelize.STRING, // Corrected type
+      jobTitle: {
+        type: Sequelize.STRING,
         allowNull: true
       },
-      divisionName: { // Mapping of HRMS division_name field
-        type: Sequelize.STRING, // Corrected type
+      departmentId: {
+        type: Sequelize.STRING,
         allowNull: true
       },
-      officeId: { // Mapping of HRMS office_id field
-        type: Sequelize.STRING, // Corrected type
+      departmentName: {
+        type: Sequelize.STRING,
         allowNull: true
       },
-      officeName: { // Mapping of HRMS office_name field
-        type: Sequelize.STRING, // Corrected type
+      divisionId: {
+        type: Sequelize.STRING,
         allowNull: true
       },
-      gradeId: { // Mapping of HRMS grade_id field
-        type: Sequelize.STRING, // Corrected type
+      divisionName: {
+        type: Sequelize.STRING,
         allowNull: true
       },
-      grade: { // Mapping of HRMS grade field (grade level)
-        type: Sequelize.STRING, // Corrected type
+      officeId: {
+        type: Sequelize.STRING,
         allowNull: true
       },
-      partyId: { // Mapping of HRMS party_id field
-        type: Sequelize.STRING, // Corrected type
+      officeName: {
+        type: Sequelize.STRING,
         allowNull: true
       },
-      jobStatus: { // Mapping of HRMS job_status field (raw status)
-        type: Sequelize.STRING, // Corrected type
+      gradeId: {
+        type: Sequelize.STRING,
         allowNull: true
       },
-       jobLocationId: { // Mapping of HRMS job_location_id field
-        type: Sequelize.STRING, // Corrected type
+      grade: {
+        type: Sequelize.STRING,
         allowNull: true
       },
-       jobLocation: { // Mapping of HRMS job_location field
-        type: Sequelize.STRING, // Corrected type
+      partyId: {
+        type: Sequelize.STRING,
         allowNull: true
       },
-       location: { // Mapping of HRMS location field (perhaps simplified)
-        type: Sequelize.STRING, // Corrected type
+      // terminationDate column removed/renamed above
+      jobStatus: {
+        type: Sequelize.STRING,
         allowNull: true
       },
-      metadata: { // JSONB field for storing additional, less structured attributes from HRMS
-        type: Sequelize.JSONB, // Corrected type
+      jobLocationId: {
+        type: Sequelize.STRING,
+        allowNull: true
+      },
+      jobLocation: {
+        type: Sequelize.STRING,
+        allowNull: true
+      },
+      location: { // Corresponds to the 'location' field in the model
+        type: Sequelize.STRING,
+        allowNull: true
+      },
+      metadata: {
+        type: Sequelize.JSONB,
         allowNull: true
       },
       createdAt: {
@@ -125,12 +131,14 @@ module.exports = {
         allowNull: false,
         type: Sequelize.DATE
       }
-      // Note: The connectorConfigId field was moved to the CollectionRuns table, not here on Users.
-      // Note: The original 'user_id' field (which was also a problem) is removed here, as 'id' is the primary key UUID.
     });
   },
 
   async down(queryInterface, Sequelize) {
+    // Drop the table in the down migration
     await queryInterface.dropTable('Users');
+    // Optionally, drop the extension if it's certain nothing else uses it,
+    // but generally safer to leave it unless cleaning up entirely.
+    // await queryInterface.sequelize.query(`DROP EXTENSION IF EXISTS "uuid-ossp";`);
   }
 };

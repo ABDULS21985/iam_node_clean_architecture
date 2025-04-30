@@ -3,8 +3,6 @@ const Redis = require('ioredis');
 
 // Read Redis URL and password from environment variables (or load via ConfigService later if needed)
 // These should be defined in your project's root .env file or system environment
-const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379'; // Default URL for local development
-const redisPassword = process.env.REDIS_PASSWORD; // Optional: Password if your Redis requires auth
 
 let redisClient = null;
 
@@ -16,63 +14,59 @@ let redisClient = null;
 const init = () => {
     if (redisClient) {
         console.log('[TemporaryStorage] Redis client already initialized.');
-        return; // Prevent double initialization
+        return;
     }
     try {
         console.log('[TemporaryStorage] Initializing Redis client...');
+
+        const redisHost = process.env.REDIS_HOST || 'localhost';
+        const redisPort = process.env.REDIS_PORT || 6379;
+        const redisPassword = process.env.REDIS_PASSWORD || null;
+
+        let redisUrl;
+
+        if (redisPassword) {
+            console.log('[TemporaryStorage] REDIS_PASSWORD found. Building Redis URL with authentication.');
+            redisUrl = `redis://:${redisPassword}@${redisHost}:${redisPort}/0`;
+        } else {
+            console.warn('[TemporaryStorage] REDIS_PASSWORD not found. Connecting without authentication.');
+            redisUrl = `redis://${redisHost}:${redisPort}/0`;
+        }
+
+        console.log(`[TemporaryStorage] Final Redis URL: ${redisUrl.replace(/:([^@]+)@/, ':<password>@')}`);
+
         const options = {
-            enableOfflineQueue: true, // Queue commands while reconnecting
-            // Add more advanced options here as needed (reconnect strategies, command timeouts, etc.)
-             lazyConnect: true, // Connect only when the first command is sent (or use .connect())
-             // Add a basic retry strategy for initial connection attempts handled by ioredis
-             retryStrategy(times) {
-                const delay = Math.min(times * 50, 2000); // Example: 50ms, 100ms, ..., up to 2s
+            enableOfflineQueue: true,
+            lazyConnect: true,
+            retryStrategy(times) {
+                const delay = Math.min(times * 50, 2000);
                 console.log(`[TemporaryStorage] Retrying Redis connection (attempt ${times}, delay ${delay}ms)`);
                 return delay;
-             },
-             maxRetriesPerRequest: 3 // Optional: limit retries for commands after connection
+            },
+            maxRetriesPerRequest: 3
         };
 
-        // --- Password Handling ---
-        if (redisPassword) {
-             // Use console here as logger might not be configured/passed yet during init
-             console.log('[TemporaryStorage] REDIS_PASSWORD environment variable found. Configuring client with password.');
-             options.password = redisPassword;
-        } else {
-             console.warn('[TemporaryStorage] REDIS_PASSWORD environment variable not set. Connecting without password.');
-        }
-        // ------------------------
-
-        // Create the Redis client instance
-        // Consider logging the URL *without* password for security if REDIS_URL might contain it
-        console.log(`[TemporaryStorage] Creating Redis client instance for URL: ${redisUrl.replace(/:([^@\/]+)@/, ':<password>@')}`);
         redisClient = new Redis(redisUrl, options);
 
-        // --- Connection Event Listeners ---
-        redisClient.on('connect', () => console.log('[TemporaryStorage] Redis client connecting...')); // Changed from 'connected' to 'connecting' as 'ready' means usable
+        redisClient.on('connect', () => console.log('[TemporaryStorage] Redis client connecting...'));
         redisClient.on('ready', () => console.log('[TemporaryStorage] Redis client ready.'));
-        redisClient.on('error', (err) => console.error('[TemporaryStorage] Redis client error:', err.message)); // Log only message for common errors like NOAUTH
+        redisClient.on('error', (err) => console.error('[TemporaryStorage] Redis client error:', err.message));
         redisClient.on('close', () => console.log('[TemporaryStorage] Redis client connection closed.'));
-        redisClient.on('reconnecting', (delay) => console.log(`[TemporaryStorage] Redis client reconnecting (delay ${delay}ms)...`)); // Simplified reconnect log
+        redisClient.on('reconnecting', (delay) => console.log(`[TemporaryStorage] Redis client reconnecting (delay ${delay}ms)...`));
         redisClient.on('end', () => console.log('[TemporaryStorage] Redis client connection ended (will not reconnect).'));
-        // --- End Event Listeners ---
 
-         // Initiate the connection explicitly (good practice for startup)
-         console.log('[TemporaryStorage] Initiating Redis connection...');
-         redisClient.connect().catch(err => {
-             console.error('[TemporaryStorage] Initial Redis connection attempt failed:', err.message);
-             // The 'error' event listener will likely also catch this and trigger retries based on retryStrategy
-             // No need to throw here usually, let retryStrategy handle it.
-         });
+        console.log('[TemporaryStorage] Initiating Redis connection...');
+        redisClient.connect().catch(err => {
+            console.error('[TemporaryStorage] Initial Redis connection attempt failed:', err.message);
+        });
 
-         console.log('[TemporaryStorage] Redis client initialization process started.');
-         // Connection happens asynchronously based on events.
+        console.log('[TemporaryStorage] Redis client initialization process started.');
     } catch (error) {
         console.error('[TemporaryStorage] Failed to initialize Redis client (Instantiation Error):', error);
-        // This catch is for errors *during* client instantiation, not connection errors.
         throw new Error('Failed to initialize temporary storage (Redis client instantiation failed): ' + error.message);
     }
 };
+
 
 /**
  * Saves a data snapshot to Redis. Data is stringified to JSON.

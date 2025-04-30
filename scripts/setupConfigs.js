@@ -22,24 +22,36 @@ async function runSetup() {
         // --- Define Configuration Data ---
 
         // Data for the HRMS Connector Config (Existing)
+// Data for the HRMS Connector Config (Existing)
         const hrmsConnectorData = {
             name: "Postgres HRMS Identity Source",
             serviceType: "IdentityCollection",
             type: "hrms-db-postgres",
-            mappingRules: {               // ← populate the JSONB mappingRules column
-              dbType: "postgres",
-              connection: {
-                host:     process.env.HRMS_DB_HOST,
-                port:     parseInt(process.env.HRMS_DB_PORT, 10),
-                database: process.env.HRMS_DB_NAME,
-                user:     process.env.HRMS_DB_USER,
-                password: process.env.HRMS_DB_PASSWORD
-              },
-              query: "SELECT DISTINCT … FROM apps.xxcbn_iam_employees_v WHERE …",
-              uniqueIdentifierAttribute: "employee_id"
+            configuration: {
+                mappingRules: {
+                    dbType: "postgres",
+                    connection: {
+                        host: process.env.HRMS_DB_HOST,
+                        port: parseInt(process.env.HRMS_DB_PORT, 10),
+                        database: process.env.HRMS_DB_NAME,
+                        user: process.env.HRMS_DB_USER,
+                        password: process.env.HRMS_DB_PASSWORD
+                    },
+                    // === UPDATED QUERY HERE ===
+                    query: "SELECT DISTINCT person_id, employee_id, first_name, middle_name, last_name, date_of_hire, job_title, supervisor_id, head_of_office_id, job_location_id, job_location, mobile_number, department_id, department_name, division_id, division_name, office_id, office_name, grade_id, grade, party_id, termination_date, job_status FROM apps.xxcbn_iam_employees_v WHERE (termination_date IS NULL OR termination_date = CURRENT_DATE OR termination_date > CURRENT_DATE) AND department_id <> '1129' LIMIT 4000;",
+                    // ==========================
+                    uniqueIdentifierAttribute: "employee_id"
+                },
+                metadata: {
+                    description: "Collect Employee Identities from Postgres View"
+                }
             },
-            metadata: { description: "Collect Employee Identities from Postgres View" }
-          };
+            // This top-level metadata is also fine for the ConnectorConfig entry
+            metadata: {
+                description: "Collect Employee Identities from Postgres View"
+            }
+        };
+        
           
 
         // Data for the HRMS to IGLM User Mapping Config (Existing)
@@ -49,90 +61,142 @@ async function runSetup() {
             sourceId: null, // Can be linked to connector ID later if needed, but name is sufficient for lookup now
             targetType: "User", // Mapping is to the IGLM User model
             mappingRules: {
-             attributeMappings: {
-                "firstName": "first_name",
-                "lastName": "last_name",
-                "email": "email", // Assuming email field exists in the HRMS query
-                "hrmsId": "employee_id",
-                "status": "job_status", // Raw HRMS field name for status
-                "hireDate": "date_of_hire",
-                "exitDate": "termination_date",
-                "department": "department_name",
-                "title": "job_title",
-                "location": "job_location",
-                "mobileNumber": "mobile_number"
-             },
-             statusMapping: { // Map HRMS status values to IGLM status values
-                "Active": "active",
-                "On Leave": "active",
-                "Terminated": "exited",
-                "Pending Hire": "pending_joiner",
-                "Inactive": "inactive" // Assuming 'Inactive' is a possible status
-             },
-             metadataMapping: { // Map HRMS fields into the IGLM User metadata JSONB
-                "personId": "person_id",
-                "middleName": "middle_name",
-                "supervisorHrmsId": "supervisor_id",
-                "headOfOfficeHrmsId": "head_of_office_id",
-                "jobLocationId": "job_location_id",
-                "departmentId": "department_id",
-                "divisionId": "division_id",
-                "divisionName": "division_name",
-                "officeId": "office_id",
-                "officeName": "office_name",
-                "gradeId": "grade_id",
-                "gradeLevel": "grade",
-                "partyId": "party_id"
-             },
-             metadata: { // Metadata about the mapping rules
-                 "sourceUniqueIdField": "employee_id", // <-- Crucial for DeltaDetection and DataProcessor
-                 "statusSourceField": "job_status" // <-- Crucial for DataProcessor applyMapping status logic
-             }
-                // TODO: Add rules for identifying mover attributes if needed for sophisticated comparison/events
-                // "moverAttributes": ["job_title", "department_name", "job_location", "email"]
-             },
-             metadata: {}
+                attributeMappings: {
+                    "firstName": "first_name",
+                    "lastName": "last_name",
+                    "email": "email",
+                    "hrmsId": "employee_id",
+                    "status": "job_status", // Maps HRMS status string for lookup in statusMapping
+                    "jobStatus": "job_status", // Maps raw HRMS status string to the jobStatus column
+                    "hireDate": "date_of_hire",
+                    "exitDate": "termination_date",
+                    "departmentName": "department_name",
+                    "departmentId": "department_id",
+                    "supervisorId": "supervisor_id", // Maps source supervisor_id to direct supervisorId column
+                    "headOfOfficeId": "head_of_office_id", // <<-- ADDED: Maps source head_of_office_id to direct headOfOfficeId column
+                    "jobTitle": "job_title",
+                    "jobLocation": "job_location",
+                    // "location": "job_location", // <-- REMOVED: Source 'location' not in query
+                    "mobileNumber": "mobile_number",
+                    "jobLocationId": "job_location_id", // Added direct mapping for jobLocationId
+                    "divisionId": "division_id", // Added direct mapping for divisionId
+                    "divisionName": "division_name", // Added direct mapping for divisionName
+                    "officeId": "office_id", // Added direct mapping for officeId
+                    "officeName": "office_name", // Added direct mapping for officeName
+                    "gradeId": "grade_id", // Added direct mapping for gradeId
+                    "grade": "grade", // <<-- ADDED: Maps source grade to direct grade column
+                    "partyId": "party_id" // Added direct mapping for partyId
+                },
+                statusMapping: { // Map HRMS status values (from job_status) to IGLM status values ('pending_joiner', 'active', etc.)
+                    "Active": "active",
+                    "Active Assignment": "active",
+                    "On Leave": "active",
+                    "Maternity Leave Without Pay": "on_leave",
+                    "Suspend Employee from Payroll": "inactive",
+                    "Terminated": "exited",
+                    "Pending Hire": "pending_joiner",
+                    "Inactive": "inactive"
+                },
+                metadataMapping: { // Map HRMS fields into the IGLM User metadata JSONB (using these keys)
+                    "personId": "person_id",
+                    "middleName": "middle_name",
+                    "supervisorHrmsId": "supervisor_id", // Maps source supervisor_id to metadata key supervisorHrmsId
+                    "headOfOfficeHrmsId": "head_of_office_id", // Maps source head_of_office_id to metadata key headOfOfficeHrmsId
+                    "jobLocationId": "job_location_id",
+                    "departmentId": "department_id",
+                    "divisionId": "division_id",
+                    "divisionName": "division_name",
+                    "officeId": "office_id",
+                    "officeName": "office_name",
+                    "gradeId": "grade_id",
+                    "gradeLevel": "grade", // Maps source grade to metadata key gradeLevel
+                    "partyId": "party_id"
+                },
+                metadata: { // Metadata about the mapping rules themselves
+                    "sourceUniqueIdField": "employee_id", // <-- Crucial for DeltaDetection and DataProcessor
+                    "statusSourceField": "job_status" // <-- Crucial for DataProcessor applyMapping status logic
+                    // TODO: Add rules for identifying mover attributes if needed for sophisticated comparison/events
+                    // "moverAttributes": ["job_title", "department_name", "job_location", "email"]
+                }
+            },
+            metadata: {} // Top-level metadata for the MappingConfig entry itself
         };
 
 
 // ────────────────────────────────────────────────────────────────────────────────
 // NEW ▸ Baseline mapping of user attributes to RBAC roles
 // // ────────────────────────────────────────────────────────────────────────────────
+// const defaultAttrRoleMappingData = {
+//         name: "Default Attribute To Role Mapping",
+//         sourceType: "UserAttribute",      // the matrix setup script looks for this
+//         sourceId: null,
+//         targetType: "Role",
+//         mappingRules: {
+//             /*
+//              * attributeRoleRules ⇒ evaluated in order;
+//              * the first rule that matches {attribute,value} wins.
+//              */
+//             attributeRoleRules: [
+//                 { attribute: "department_name", value: "Finance",   role: "finance_user"   },
+//                 { attribute: "department_name", value: "IT",        role: "it_user"        },
+//                 { attribute: "job_title",       value: "Manager",   role: "people_manager" }
+//             ],
+//             /*
+//              * fallback role when no explicit rule matches
+//              */
+//             defaultRole: "basic_user"
+//         },
+//         metadata: {
+//             description: "Baseline attribute-driven RBAC mapping consumed by Joiner / \
+//     Mover / Leaver orchestration layers."
+//         }
+//     };
+
 const defaultAttrRoleMappingData = {
-        name: "Default Attribute To Role Mapping",
-        sourceType: "UserAttribute",      // the matrix setup script looks for this
-        sourceId: null,
-        targetType: "Role",
-        mappingRules: {
-            /*
-             * attributeRoleRules ⇒ evaluated in order;
-             * the first rule that matches {attribute,value} wins.
-             */
-            attributeRoleRules: [
-                { attribute: "department_name", value: "Finance",   role: "finance_user"   },
-                { attribute: "department_name", value: "IT",        role: "it_user"        },
-                { attribute: "job_title",       value: "Manager",   role: "people_manager" }
-            ],
-            /*
-             * fallback role when no explicit rule matches
-             */
-            defaultRole: "basic_user"
-        },
-        metadata: {
-            description: "Baseline attribute-driven RBAC mapping consumed by Joiner / \
-    Mover / Leaver orchestration layers."
+        name: "Default Attribute To Role Mapping",
+        sourceType: "UserAttribute",
+        sourceId: null,
+        targetType: "Role",
+        mappingRules: {
+            attributeToRoleMapping: { // <--- Rules nested here
+                conditionEngine: "simple", // <--- Specify the engine (can be 'json-logic' for more complex rules)
+                rules: [ // <--- Rules array name is 'rules'
+                    //  rules based on the matrix structure:
+                     // This rule corresponds to the first row in the matrix that assigns role 61
+                    {
+                        ruleName: "CBN - GL Admin Budget & Funds Inquiry Rule 1",
+                        condition: { // <--- Simple object condition for static attributes
+                             "jobLocationId": "106", // Use string if IDs are strings in your data/model
+                             "departmentId": "119",
+                             "divisionId": "119",
+                             "officeId": "119"
+                         },
+                         eligibleGrades: ["01", "62", "106", "64"], // <--- Eligible grades property
+                        roles: ["61"] // <--- Array of role names (using the number for now, assuming they map to role names)
+                    },
+                     //  rule for the second row assigning roles 63, 64, 65
+                    {
+                        ruleName: "CBN - HQ GL Reports (Generic) Rule 1",
+                        condition: {
+                             "jobLocationId": "106",
+                             "departmentId": "127",
+                             "divisionId": "48",
+                             "officeId": "127"
+                         },
+                         // Assuming this rule applies to all grades if eligibleGrades is missing
+                        roles: ["63", "64", "65"]
+                    },
+                     // ... Add more rules based on your matrix ...
+                ]
+            },
+            defaultRole: "basic_user", // <--- Default role remains here
+             // Other mappingRules properties can exist here alongside attributeToRoleMapping and defaultRole
+             // e.g., "metadata": { ... }
+        },
+        metadata: {
+            description: "Baseline attribute-driven RBAC mapping"
         }
     };
-    
-
-
-
-
-
-
-
-
-
 
         // Data for the ICS Service Configuration (Existing)
         const icsServiceConfigData = {
@@ -205,7 +269,7 @@ const defaultAttrRoleMappingData = {
         const postgresApp = {
             name: "Finance App (Postgres)",
             description: "Financial application running on PostgreSQL",
-            type: "financial", // Example type
+            type: "financial", // We will type
             connectorId: null // Will link to the ConnectorConfig ID later
             // id will be generated
         };
@@ -219,7 +283,7 @@ const defaultAttrRoleMappingData = {
                 dbType: "postgres",
                 connection: { // Use specific env vars for this app's DB, nested under connection
                     host: process.env.FINANCE_APP_DB_HOST || "localhost",
-                    port: process.env.FINANCE_APP_DB_PORT ? parseInt(process.env.FINANCE_APP_DB_PORT, 10) : 5433, // Example different port, parse int
+                    port: process.env.FINANCE_APP_DB_PORT ? parseInt(process.env.FINANCE_APP_DB_PORT, 10) : 5433, // We will different port, parse int
                     database: process.env.FINANCE_APP_DB_NAME || "finance_db",
                     user: process.env.FINANCE_APP_DB_USER || "finance_user",
                     password: process.env.FINANCE_APP_DB_PASSWORD || "secure_finance_pw",
@@ -260,13 +324,13 @@ const defaultAttrRoleMappingData = {
                     sourceField: "email", // Use the 'email' attribute from the IGLM User model
                     targetFormat: "string" // The format needed by the target DB (usually just string)
                     // TODO: Add logic if email needs formatting for the target DB, or if a lookup is required
-                    // lookup: { connectorName: "...", queryTemplate: "..." } // Example: lookup user_id in target app's users table
+                    // lookup: { connectorName: "...", queryTemplate: "..." } // We will: lookup user_id in target app's users table
                 },
                 // --- Map IGLM Entitlement IDs to App-Specific Identifiers/Parameters for SQL ---
                 // The keys here are the UUIDs of your IGLM Entitlement entries in the DB.
                 // The values provide the app-specific ID/params needed by the SQL templates.
                 entitlementMappings: {
-                    // Example: Map IGLM Entitlement "Finance App User Group" (UUID: xxx) to Group ID 101 in app DB
+                    // We will: Map IGLM Entitlement "Finance App User Group" (UUID: xxx) to Group ID 101 in app DB
                     "00000000-0000-0000-0000-000000000101": { // Replace with actual IGLM Entitlement UUID
                          appEntitlementId: 101, // The actual group ID in the Finance App DB (used as $2 in SQL)
                          sqlTemplateName: "grantGroup", // Which template to use from sqlTemplates in the connector config
@@ -274,13 +338,13 @@ const defaultAttrRoleMappingData = {
                          // Add other parameters needed by the SQL template here
                          // extraParams: [{ sourceField: "...", targetParameterIndex: 3 }]
                     },
-                    // Example: Map IGLM Entitlement "Finance App Admin Group" (UUID: yyy) to Group ID 102
+                    // We will: Map IGLM Entitlement "Finance App Admin Group" (UUID: yyy) to Group ID 102
                      "00000000-0000-0000-0000-000000000102": { // Replace with actual IGLM Entitlement UUID
                          appEntitlementId: 102,
                          sqlTemplateName: "grantGroup",
                          revokeSqlTemplateName: "revokeGroup"
                      },
-                     // Example: Map IGLM Entitlement "Finance App License Basic" (UUID: zzz) to License Code 'BASIC'
+                     // We will: Map IGLM Entitlement "Finance App License Basic" (UUID: zzz) to License Code 'BASIC'
                      "00000000-0000-0000-0000-000000000103": { // Replace with actual IGLM Entitlement UUID
                           appEntitlementId: 'BASIC', // The actual license code string in app DB
                           sqlTemplateName: "grantLicense", // Need a grantLicense template in connector config
@@ -303,9 +367,9 @@ const defaultAttrRoleMappingData = {
 
         // 2a. Application Entry (in Core Data Model DB)
         const oracleApp = {
-            name: "T24 Core Banking (Oracle DB)", // Example name
+            name: "T24 Core Banking (Oracle DB)", // We will name
             description: "Core banking application running on Oracle DB",
-            type: "core-banking", // Example type
+            type: "core-banking", // We will type
             connectorId: null // Will link later
             // id will be generated
         };
@@ -326,19 +390,19 @@ const defaultAttrRoleMappingData = {
                 },
                 // --- SQL Templates for Provisioning Actions (Oracle Syntax) ---
                 sqlTemplates: {
-                    // Example: Grant a T24 permission (assuming a permission table)
+                    // We will: Grant a T24 permission (assuming a permission table)
                     // Using :param binding for node-oracledb
                     grantPermission: "INSERT INTO T24_PERMISSIONS (user_id, permission_code) VALUES (:userId, :permissionCode)",
-                    // Example: Add user to a T24 role/group table
+                    // We will: Add user to a T24 role/group table
                     grantRole: "INSERT INTO T24_USER_ROLES (user_id, role_id) VALUES (:userId, :roleId)",
-                    // Example: Revoke a permission
+                    // We will: Revoke a permission
                     revokePermission: "DELETE FROM T24_PERMISSIONS WHERE user_id = :userId AND permission_code = :permissionCode",
-                     // Example: Create a user in T24's user table (more complex, likely needs sequence, multiple fields)
+                     // We will: Create a user in T24's user table (more complex, likely needs sequence, multiple fields)
                      // createUser: "INSERT INTO T24_USERS (id, username, ...) VALUES (t24_users_seq.NEXTVAL, :username, ...)",
                 },
                 // Configuration for parameter mapping if needed
                  userIdentifierTargetAttribute: "user_id", // Name of the parameter/column for the user ID
-                 entitlementIdentifierTargetAttribute: "permission_code" // Example default for entitlement ID
+                 entitlementIdentifierTargetAttribute: "permission_code" // We will default for entitlement ID
             },
             metadata: {
                  description: "Provisioning connector for T24 Core Banking (Oracle DB)"
@@ -363,13 +427,13 @@ const defaultAttrRoleMappingData = {
                 },
                 // --- Map IGLM Entitlement IDs to App-Specific SQL Parameters/Identifiers ---
                 entitlementMappings: {
-                    // Example: Map IGLM Entitlement "T24 View Account Permission" (UUID: xxx) to T24 permission 'VIEW.ACCOUNT'
+                    // We will: Map IGLM Entitlement "T24 View Account Permission" (UUID: xxx) to T24 permission 'VIEW.ACCOUNT'
                      "00000000-0000-0000-0000-000000000201": { // Replace with actual IGLM Entitlement UUID
                          appEntitlementId: 'VIEW.ACCOUNT', // The actual permission code in T24 (used as :permissionCode)
                          sqlTemplateName: "grantPermission", // Which template to use
                          revokeSqlTemplateName: "revokePermission"
                      },
-                     // Example: Map IGLM Entitlement "T24 Finance Role" (UUID: yyy) to Role ID 5
+                     // We will: Map IGLM Entitlement "T24 Finance Role" (UUID: yyy) to Role ID 5
                      "00000000-0000-0000-0000-000000000202": { // Replace with actual IGLM Entitlement UUID
                          appEntitlementId: 5, // The actual role ID in T24 DB (used as :roleId)
                          sqlTemplateName: "grantRole", // Need a grantRole template
@@ -378,8 +442,8 @@ const defaultAttrRoleMappingData = {
                     // Add mappings for other T24 entitlements
                 },
                 // Define default templates if entitlementMappings don't override
-                 defaultGrantTemplateName: "grantRole", // Example default
-                 defaultRevokeTemplateName: "revokeRole" // Example default
+                 defaultGrantTemplateName: "grantRole", // We will default
+                 defaultRevokeTemplateName: "revokeRole" // We will default
             },
             metadata: {
                  description: "Maps IGLM entitlements to T24 (Oracle DB) provisioning actions."
@@ -390,9 +454,9 @@ const defaultAttrRoleMappingData = {
 
         // 3a. Application Entry (in Core Data Model DB)
         const mysqlApp = {
-            name: "Customer Portal (MySQL DB)", // Example name
+            name: "Customer Portal (MySQL DB)", // We will name
             description: "Customer self-service portal on MySQL",
-            type: "customer-portal", // Example type
+            type: "customer-portal", // We will type
             connectorId: null // Will link later
             // id will be generated
         };
@@ -415,19 +479,19 @@ const defaultAttrRoleMappingData = {
                 },
                 // --- SQL Templates for Provisioning Actions (MySQL Syntax) ---
                 sqlTemplates: {
-                    // Example: Add user to a portal group
+                    // We will: Add user to a portal group
                     // Using ? binding for mysql2
                     grantGroup: "INSERT IGNORE INTO portal_user_groups (user_id, group_id) VALUES (?, ?)", // INSERT IGNORE for idempotency
-                    // Example: Assign a feature flag
+                    // We will: Assign a feature flag
                     assignFeature: "INSERT IGNORE INTO portal_user_features (user_id, feature_code) VALUES (?, ?)",
-                    // Example: Revoke a group membership
+                    // We will: Revoke a group membership
                     revokeGroup: "DELETE FROM portal_user_groups WHERE user_id = ? AND group_id = ?",
-                     // Example: Revoke a feature flag
+                     // We will: Revoke a feature flag
                     revokeFeature: "DELETE FROM portal_user_features WHERE user_id = ? AND feature_code = ?",
                 },
                 // Configuration for parameter mapping if needed
                  userIdentifierTargetAttribute: "user_id", // Name of the parameter/column for the user ID
-                 entitlementIdentifierTargetAttribute: "group_id" // Example default for entitlement ID
+                 entitlementIdentifierTargetAttribute: "group_id" // We will default for entitlement ID
             },
             metadata: {
                  description: "Provisioning connector for Customer Portal (MySQL DB)"
@@ -452,13 +516,13 @@ const defaultAttrRoleMappingData = {
                 },
                 // --- Map IGLM Entitlement IDs to App-Specific SQL Parameters/Identifiers ---
                 entitlementMappings: {
-                    // Example: Map IGLM Entitlement "Portal Premium Access" (UUID: xxx) to Group ID 5
+                    // We will: Map IGLM Entitlement "Portal Premium Access" (UUID: xxx) to Group ID 5
                      "00000000-0000-0000-0000-000000000301": { // Replace with actual IGLM Entitlement UUID
                          appEntitlementId: 5, // The actual group ID in the Portal DB (used as ?)
                          sqlTemplateName: "grantGroup",
                          revokeSqlTemplateName: "revokeGroup"
                      },
-                     // Example: Map IGLM Entitlement "Portal Feature X" (UUID: yyy) to Feature Code 'FEATURE_X'
+                     // We will: Map IGLM Entitlement "Portal Feature X" (UUID: yyy) to Feature Code 'FEATURE_X'
                      "00000000-0000-0000-0000-000000000302": { // Replace with actual IGLM Entitlement UUID
                           appEntitlementId: 'FEATURE_X', // The actual feature code string
                           sqlTemplateName: "assignFeature",
@@ -497,15 +561,15 @@ const defaultAttrRoleMappingData = {
              configuration: {
                  connection: { // LDAP connection details
                      url: process.env.LDAP_URL || "ldap://localhost:389",
-                     bindDn: process.env.LDAP_BIND_DN || "cn=BindUser,dc=example,dc=com",
-                     bindPassword: process.env.LDAP_BIND_PASSWORD || "yoursecurepassword",
+                     bindDn: process.env.LDAP_BIND_DN || "cn=amduser,dc=katangatest,dc=com",
+                     bindPassword: process.env.LDAP_BIND_PASSWORD || "A123456@amd",
                      // Add other ldapjs client options here (e.g., connectTimeout, requestTimeout, tlsOptions)
-                     // connectTimeout: 5000,
-                     // requestTimeout: 10000
+                     connectTimeout: 5000,
+                     requestTimeout: 10000
                  },
                  userMapping: { // How to determine the user's DN for LDAP operations
                      // Option 1: Use a template
-                     userDnTemplate: process.env.LDAP_USER_DN_TEMPLATE || "cn=:userIdInApp,ou=Users,dc=example,dc=com",
+                     userDnTemplate: process.env.LDAP_USER_DN_TEMPLATE || "cn=:userIdInApp,ou=Users,dc=katangatest,dc=com",
                      // Option 2: Assume userIdInApp is the full DN
                      // userIdInAppIsDn: true
                  },
@@ -531,7 +595,7 @@ const defaultAttrRoleMappingData = {
                  // This mapping primarily maps entitlements.
                  // However, you might need a source field from the IGLM User to find the user in AD/LDAP
                  // if the connector needs something other than the default IGLM User ID.
-                 // Example: Map IGLM User's hrmsId to the sAMAccountName attribute in AD (if needed for lookup before modify)
+                 // We will: Map IGLM User's hrmsId to the sAMAccountName attribute in AD (if needed for lookup before modify)
                  // userIdentifierMapping: { sourceField: "hrmsId", targetAttribute: "sAMAccountName" }
                  // For modify operations on groups, the connector uses the user's *calculated DN*.
 
@@ -539,15 +603,15 @@ const defaultAttrRoleMappingData = {
                  // The keys here are the UUIDs of your IGLM Entitlement entries.
                  // The values provide the app-specific ID/params needed by the LDAP operations (e.g., Group DN).
                  entitlementMappings: {
-                     // Example: Map IGLM Entitlement "AD Sales Group" (UUID: xxx) to the DN of the Sales group
+                     // We will: Map IGLM Entitlement "AD Sales Group" (UUID: xxx) to the DN of the Sales group
                      "00000000-0000-0000-0000-000000000401": { // Replace with actual IGLM Entitlement UUID
-                          appEntitlementId: "cn=SalesGroup,ou=Groups,dc=example,dc=com", // The actual Group DN in AD/LDAP
+                          appEntitlementId: "cn=SalesGroup,ou=Groups,dc=We will,dc=com", // The actual Group DN in AD/LDAP
                           operationType: "groupMembership" // Indicates this maps to a group membership operation
                           // Add other parameters if needed for complex LDAP ops
                      },
-                     // Example: Map IGLM Entitlement "AD VPN Users" (UUID: yyy) to the DN of the VPN Users group
+                     // We will: Map IGLM Entitlement "AD VPN Users" (UUID: yyy) to the DN of the VPN Users group
                      "00000000-0000-0000-0000-000000000402": { // Replace with actual IGLM Entitlement UUID
-                          appEntitlementId: "cn=VPNUsers,ou=Groups,dc=example,dc=com",
+                          appEntitlementId: "cn=VPNUsers,ou=Groups,dc=We will,dc=com",
                           operationType: "groupMembership"
                      }
                      // Add mappings for all relevant AD/LDAP groups/entitlements
