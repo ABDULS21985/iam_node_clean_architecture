@@ -1,36 +1,34 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# Identity Collection Service Image – Alpine + Node 23  (Released Apr 2025)
+# Joiner Service Image – Alpine + Node 23  (Released Apr 2025)
 # ──────────────────────────────────────────────────────────────────────────────
 FROM node:23-alpine
 
 ###############################################################################
-# 1️⃣ Establish the service working directory
+# 1️⃣ Set the service workdir first
 ###############################################################################
-WORKDIR /app/services/identity-collection-service
+WORKDIR /app/services/joiner-service
 
 ###############################################################################
-# 2️⃣ Ingest dependency manifests and install production dependencies
+# 2️⃣ Copy ONLY the dependency manifests and install prod deps
 ###############################################################################
-# Copy service-specific package.json and committed package-lock.json
-COPY services/identity-collection-service/package*.json ./
+# Copy the service-specific package.json **and** committed package-lock.json
+COPY services/joiner-service/package*.json ./
 
-# Deterministic, production-only install
-RUN npm ci --omit=dev
+# Deterministic, production-only install (lock-file required for npm ci)
+RUN npm ci --omit=dev    # npm 7+ syntax replaces --production
 
 ###############################################################################
-# 3️⃣ Ingest application source and shared modules
+# 3️⃣ Copy the remainder of the source tree
 ###############################################################################
-# Copy the idcs-service source code
-COPY services/identity-collection-service/ ./
-
-# Copy shared workspace library into a predictable path
+# Copy service source
+COPY services/joiner-service/ ./
+# Copy shared workspace code into a predictable path
 COPY shared/ /app/shared/
 
 ###############################################################################
 # 4️⃣ Runtime configuration
 ###############################################################################
-# Expose the port configured via IDCS_PORT (defaults to 4001)
-EXPOSE 4001
+EXPOSE 4002
+CMD ["node", "src/server.js"]
 
-# Launch the Node.js server
-CMD ["node", "dist/main.js"]
+# NOTE: env vars from .env are injected by docker-compose via `env_file:`
